@@ -57,13 +57,13 @@ func (g Gate) withDefaults() Gate {
 	return g
 }
 
-// RecreateContainer replaces container id with one running newRef, keeping
-// its configuration. The old container is renamed and stopped, not removed,
-// until the new one passes the gate; otherwise it is restored.
 // OldConfig fetches the image config of a container whose image is no
 // longer in the local store (see RecreateContainer). May be nil.
 type OldConfig func(ctx context.Context, old *engine.Container) (map[string]any, error)
 
+// RecreateContainer replaces container id with one running newRef, keeping
+// its configuration. The old container is renamed and stopped, not removed,
+// until the new one passes the gate; otherwise it is restored.
 func RecreateContainer(ctx context.Context, e Engine, id, newRef string, auth *engine.RegistryAuth, gate Gate, oldConfig OldConfig) error {
 	gate = gate.withDefaults()
 	old, err := e.Inspect(ctx, id)
