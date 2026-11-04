@@ -113,12 +113,23 @@ func (u *Updater) Run(ctx context.Context) ([]Event, error) {
 			return nil, fmt.Errorf("list containers: %w", err)
 		}
 	}
+	var deps map[string][]engine.ContainerSummary
+	if len(containers) > 0 {
+		// Every container, enabled or not, running or not, may share the
+		// network namespace of one we update.
+		all, err := u.Engine.AllContainers(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("list containers: %w", err)
+		}
+		deps = dependents(all)
+	}
 	for _, c := range containers {
 		if c.Labels["com.docker.swarm.service.id"] != "" || c.Labels[rollout.LabelSelf] == "true" {
 			continue // swarm tasks are updated through their service; never replace ourselves mid-run
 		}
 		name := strings.TrimPrefix(firstOr(c.Names, c.ID), "/")
-		u.container(ctx, c.ID, name, c.Labels, emit)
+		// By name: an earlier update in this cycle may have replaced it.
+		u.container(ctx, name, c.Labels, deps, emit)
 	}
 
 	if u.Opts.SkipServices {
@@ -180,7 +191,71 @@ func (u *Updater) plan(ctx context.Context, current registry.Ref, runningDigest 
 	return target.WithDigest(digest), beyond, nil
 }
 
-func (u *Updater) container(ctx context.Context, id, name string, labels map[string]string, emit func(Event)) {
+// dependents maps a container ID to the containers, running or stopped,
+// that share its network namespace.
+func dependents(all []engine.ContainerSummary) map[string][]engine.ContainerSummary {
+	out := map[string][]engine.ContainerSummary{}
+	for _, c := range all {
+		if parent := rollout.SharesNetworkWith(c.HostConfig.NetworkMode); parent != "" {
+			out[parent] = append(out[parent], c)
+		}
+	}
+	return out
+}
+
+// reattach follows up on an update attempt of before. If the container
+// under its name now is a different one, or was restarted, the containers
+// sharing its network namespace are moved into the new one, and theirs in
+// turn. trusted is false when the update failed without a clean rollback:
+// whatever holds the name then may be the broken new version.
+func (u *Updater) reattach(ctx context.Context, before *engine.Container, deps map[string][]engine.ContainerSummary, trusted bool, emit func(Event)) {
+	if len(deps[before.ID]) == 0 {
+		return
+	}
+	// Like a rollback: finish even if neptide is being stopped.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Minute)
+	defer cancel()
+	name := strings.TrimPrefix(before.Name, "/")
+	after, err := u.Engine.Inspect(ctx, name)
+	if err == nil && after.ID == before.ID && after.State.StartedAt == before.State.StartedAt && after.State.Running {
+		return // never stopped: the namespace is the same
+	}
+	parentOK := err == nil && after.State.Running && (trusted || after.ID == before.ID)
+	u.follow(ctx, name, before.ID, after, parentOK, deps, emit)
+}
+
+func (u *Updater) follow(ctx context.Context, parent, oldID string, after *engine.Container, parentOK bool, deps map[string][]engine.ContainerSummary, emit func(Event)) {
+	for _, d := range deps[oldID] {
+		dep := strings.TrimPrefix(firstOr(d.Names, d.ID), "/")
+		if d.Labels[rollout.LabelSelf] == "true" {
+			// Re-attaching means stopping it: neptide would kill itself.
+			emit(Event{Kind: Failed, Target: dep, Err: fmt.Errorf("neptide shares the network of %s, which was restarted; restart neptide (docker restart %s) to get its network back", parent, dep)})
+			continue
+		}
+		if !parentOK {
+			emit(Event{Kind: Failed, Target: dep, Err: fmt.Errorf("it shares the network of %s, which is not running cleanly after a failed update (the old version may be parked as %s-neptide-old); restore %s, then restart %s", parent, parent, parent, dep)})
+			continue
+		}
+		gate := u.Opts.Gate
+		if pol, err := rollout.PolicyFrom(d.Labels, u.Opts.Defaults); err == nil && pol.HealthTimeout > 0 {
+			gate.Timeout = pol.HealthTimeout
+		}
+		newID, err := rollout.Reattach(ctx, u.Engine, d.ID, after.ID, gate)
+		if err != nil {
+			emit(Event{Kind: Failed, Target: dep, Err: err})
+			continue
+		}
+		u.Log.Info("re-attached " + dep + " to the network of " + parent)
+		// Containers in this one's namespace now point at a removed ID.
+		if newID != d.ID && len(deps[d.ID]) > 0 {
+			if nd, err := u.Engine.Inspect(ctx, newID); err == nil {
+				u.follow(ctx, dep, d.ID, nd, nd.State.Running, deps, emit)
+			}
+		}
+	}
+}
+
+func (u *Updater) container(ctx context.Context, name string, labels map[string]string, deps map[string][]engine.ContainerSummary, emit func(Event)) {
 	fail := func(err error) { emit(Event{Kind: Failed, Target: name, Err: err}) }
 	pol, err := u.policy(labels)
 	if err != nil {
@@ -190,11 +265,12 @@ func (u *Updater) container(ctx context.Context, id, name string, labels map[str
 	if !pol.Enabled {
 		return
 	}
-	ct, err := u.Engine.Inspect(ctx, id)
+	ct, err := u.Engine.Inspect(ctx, name)
 	if err != nil {
 		fail(err)
 		return
 	}
+	id := ct.ID
 	ref, err := registry.ParseRef(ct.ConfigImage())
 	if err != nil || ref.Digest != "" {
 		return // built locally, or pinned to a digest on purpose
@@ -248,6 +324,7 @@ func (u *Updater) container(ctx context.Context, id, name string, labels map[str
 		rec.Log = func(msg string) { u.Log.Warn(msg) }
 	}
 	err = rollout.RecreateContainer(ctx, u.Engine, id, next.WithDigest("").String(), rec)
+	defer u.reattach(ctx, ct, deps, err == nil || errors.Is(err, rollout.ErrRolledBack), emit)
 	switch {
 	case errors.Is(err, rollout.ErrRolledBack):
 		emit(Event{Kind: RolledBack, Target: name, From: from, To: to, Err: err})

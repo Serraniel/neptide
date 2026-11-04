@@ -183,6 +183,11 @@ type ContainerSummary struct {
 	Image  string            `json:"Image"`
 	State  string            `json:"State"`
 	Labels map[string]string `json:"Labels"`
+	// HostConfig.NetworkMode is "container:<id>" for a container that
+	// shares another one's network namespace.
+	HostConfig struct {
+		NetworkMode string `json:"NetworkMode"`
+	} `json:"HostConfig"`
 }
 
 // Containers lists running containers carrying all given labels (k or k=v).
@@ -190,6 +195,12 @@ func (c *Client) Containers(ctx context.Context, labels ...string) ([]ContainerS
 	var out []ContainerSummary
 	q := labelFilter(labels...)
 	return out, c.json(ctx, http.MethodGet, "/containers/json", q, nil, &out)
+}
+
+// AllContainers lists every container, stopped ones included.
+func (c *Client) AllContainers(ctx context.Context) ([]ContainerSummary, error) {
+	var out []ContainerSummary
+	return out, c.json(ctx, http.MethodGet, "/containers/json", url.Values{"all": {"true"}}, nil, &out)
 }
 
 // Container is the subset of GET /containers/{id}/json we read, plus the raw
@@ -205,6 +216,7 @@ type Container struct {
 	} `json:"NetworkSettings"`
 	State struct {
 		Status     string `json:"Status"`
+		StartedAt  string `json:"StartedAt"`
 		Running    bool   `json:"Running"`
 		Restarting bool   `json:"Restarting"`
 		ExitCode   int    `json:"ExitCode"`
