@@ -52,6 +52,8 @@ jobs:
       - run: CGO_ENABLED=0 go build -o /tmp/neptide ./cmd/neptide
       - name: Compose update and rollback
         run: test/integration/compose.sh /tmp/neptide
+      - name: Data-safe rollback with volume snapshots
+        run: test/integration/snapshot.sh /tmp/neptide
       - name: Swarm update and rollback (docker:dind)
         run: test/integration/swarm.sh /tmp/neptide
 

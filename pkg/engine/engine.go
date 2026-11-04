@@ -167,6 +167,15 @@ func labelFilter(labels ...string) url.Values {
 	return url.Values{"filters": {string(f)}}
 }
 
+// DockerRoot returns the daemon's data directory.
+func (c *Client) DockerRoot(ctx context.Context) (string, error) {
+	var info struct {
+		DockerRootDir string `json:"DockerRootDir"`
+	}
+	err := c.json(ctx, http.MethodGet, "/info", nil, nil, &info)
+	return info.DockerRootDir, err
+}
+
 // ContainerSummary is one entry of GET /containers/json.
 type ContainerSummary struct {
 	ID     string            `json:"Id"`
@@ -203,7 +212,17 @@ type Container struct {
 			Status string `json:"Status"`
 		} `json:"Health"`
 	} `json:"State"`
-	RestartCount int `json:"RestartCount"`
+	RestartCount int     `json:"RestartCount"`
+	Mounts       []Mount `json:"Mounts"`
+}
+
+// Mount is one entry of a container's Mounts.
+type Mount struct {
+	Type        string `json:"Type"` // volume, bind, tmpfs
+	Name        string `json:"Name"` // volume name
+	Source      string `json:"Source"`
+	Destination string `json:"Destination"`
+	RW          bool   `json:"RW"`
 }
 
 // ConfigImage is the image reference the container was created from.
@@ -337,6 +356,55 @@ func (c *Client) Stop(ctx context.Context, id string, timeout time.Duration) err
 // Rename renames a container.
 func (c *Client) Rename(ctx context.Context, id, name string) error {
 	return c.json(ctx, http.MethodPost, "/containers/"+url.PathEscape(id)+"/rename", url.Values{"name": {name}}, nil, nil)
+}
+
+// Wait blocks until the container stops and returns its exit code.
+func (c *Client) Wait(ctx context.Context, id string) (int, error) {
+	var out struct {
+		StatusCode int `json:"StatusCode"`
+		Error      *struct {
+			Message string `json:"Message"`
+		} `json:"Error"`
+	}
+	if err := c.json(ctx, http.MethodPost, "/containers/"+url.PathEscape(id)+"/wait", nil, nil, &out); err != nil {
+		return -1, err
+	}
+	if out.Error != nil && out.Error.Message != "" {
+		return out.StatusCode, errors.New(out.Error.Message)
+	}
+	return out.StatusCode, nil
+}
+
+// Volume is a named volume.
+type Volume struct {
+	Name    string            `json:"Name"`
+	Driver  string            `json:"Driver"`
+	Labels  map[string]string `json:"Labels"`
+	Options map[string]string `json:"Options"`
+}
+
+// InspectVolume reads one volume.
+func (c *Client) InspectVolume(ctx context.Context, name string) (*Volume, error) {
+	var v Volume
+	return &v, c.json(ctx, http.MethodGet, "/volumes/"+url.PathEscape(name), nil, nil, &v)
+}
+
+// CreateVolume creates a local volume with labels.
+func (c *Client) CreateVolume(ctx context.Context, name string, labels map[string]string) error {
+	return c.json(ctx, http.MethodPost, "/volumes/create", nil, map[string]any{"Name": name, "Labels": labels}, nil)
+}
+
+// Volumes lists volumes carrying all given labels.
+func (c *Client) Volumes(ctx context.Context, labels ...string) ([]Volume, error) {
+	var out struct {
+		Volumes []Volume `json:"Volumes"`
+	}
+	return out.Volumes, c.json(ctx, http.MethodGet, "/volumes", labelFilter(labels...), nil, &out)
+}
+
+// RemoveVolume deletes a volume.
+func (c *Client) RemoveVolume(ctx context.Context, name string) error {
+	return c.json(ctx, http.MethodDelete, "/volumes/"+url.PathEscape(name), nil, nil, nil)
 }
 
 // Remove force-removes a container (not its volumes).
