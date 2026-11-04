@@ -121,6 +121,48 @@ func (c *Client) Digest(ctx context.Context, r Ref) (string, error) {
 	return "sha256:" + hex.EncodeToString(sum.Sum(nil)), nil
 }
 
+// ImageConfig returns the image config ("config" of the OCI image config
+// blob: Env, Cmd, Healthcheck ...) of r.Digest, which must be a platform
+// manifest digest. Used when the local image store no longer has it.
+func (c *Client) ImageConfig(ctx context.Context, r Ref) (map[string]any, error) {
+	if r.Digest == "" {
+		return nil, fmt.Errorf("%s: a manifest digest is required", r.Name())
+	}
+	u := fmt.Sprintf("%s/v2/%s/manifests/%s", c.base(r.Host), r.Repo, r.Digest)
+	res, err := c.do(ctx, http.MethodGet, u, r, http.Header{"Accept": {Accept}})
+	if err != nil {
+		return nil, err
+	}
+	var man struct {
+		Config struct {
+			Digest string `json:"digest"`
+		} `json:"config"`
+	}
+	err = json.NewDecoder(io.LimitReader(res.Body, 4<<20)).Decode(&man)
+	_ = res.Body.Close()
+	if err != nil {
+		return nil, err
+	}
+	if man.Config.Digest == "" {
+		return nil, fmt.Errorf("%s is not a platform manifest", r.String())
+	}
+	res, err = c.do(ctx, http.MethodGet, fmt.Sprintf("%s/v2/%s/blobs/%s", c.base(r.Host), r.Repo, man.Config.Digest), r, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = res.Body.Close() }()
+	var blob struct {
+		Config map[string]any `json:"config"`
+	}
+	if err := json.NewDecoder(io.LimitReader(res.Body, 16<<20)).Decode(&blob); err != nil {
+		return nil, err
+	}
+	if blob.Config == nil {
+		blob.Config = map[string]any{}
+	}
+	return blob.Config, nil
+}
+
 func (c *Client) do(ctx context.Context, method, u string, r Ref, h http.Header) (*http.Response, error) {
 	key := r.Host + "/" + r.Repo
 	for attempt := 0; attempt < 2; attempt++ {

@@ -237,7 +237,7 @@ func (u *Updater) container(ctx context.Context, id, name string, labels map[str
 	gate := u.Opts.Gate
 	gate.Timeout = pol.HealthTimeout
 	// Recreate by tag, as compose would; the pull resolves the same digest.
-	err = rollout.RecreateContainer(ctx, u.Engine, id, next.WithDigest("").String(), u.auth(next.Host), gate)
+	err = rollout.RecreateContainer(ctx, u.Engine, id, next.WithDigest("").String(), u.auth(next.Host), gate, u.oldConfig(ref))
 	switch {
 	case errors.Is(err, rollout.ErrRolledBack):
 		emit(Event{Kind: RolledBack, Target: name, From: from, To: to, Err: err})
@@ -293,6 +293,21 @@ func (u *Updater) service(ctx context.Context, svc *engine.Service, emit func(Ev
 		fail(err)
 	default:
 		emit(Event{Kind: Updated, Target: name, Swarm: true, From: from, To: to})
+	}
+}
+
+// oldConfig fetches a vanished running image's config from its registry,
+// using the manifest digest the daemon recorded on the container.
+func (u *Updater) oldConfig(ref registry.Ref) rollout.OldConfig {
+	return func(ctx context.Context, old *engine.Container) (map[string]any, error) {
+		d, err := u.Engine.ManifestDigest(ctx, old.ID)
+		if err != nil {
+			return nil, err
+		}
+		if d == "" {
+			return nil, fmt.Errorf("the daemon does not report the container's manifest digest (needs Engine API 1.48)")
+		}
+		return u.Registry.ImageConfig(ctx, ref.WithDigest(d))
 	}
 }
 

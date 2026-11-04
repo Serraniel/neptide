@@ -72,6 +72,10 @@ func fakeRegistry(t *testing.T) *httptest.Server {
 			fmt.Fprint(w, `{"tags":["2.0"]}`)
 		case "/v2/team/app/manifests/1.0":
 			w.Header().Set("Docker-Content-Digest", "sha256:aaa")
+		case "/v2/team/app/manifests/sha256:mmm":
+			fmt.Fprint(w, `{"config":{"digest":"sha256:ccc"}}`)
+		case "/v2/team/app/blobs/sha256:ccc":
+			fmt.Fprint(w, `{"config":{"Cmd":["serve"],"Healthcheck":{"Test":["CMD","true"]}}}`)
 		case "/v2/team/app/manifests/nohead":
 			if r.Method == http.MethodGet {
 				fmt.Fprint(w, "manifest")
@@ -109,6 +113,10 @@ func TestClient(t *testing.T) {
 	// sha256("manifest")
 	if d, _ := c.Digest(ctx, ref.WithTag("nohead")); d != "sha256:da4bd8a89fac8e6b3ecbcfd4fe3a0bc8c8fdc7a2e2dbe2bc4f3e8a4a4d3e4b06" && len(d) != 71 {
 		t.Fatalf("fallback digest = %q", d)
+	}
+	cfg, err := c.ImageConfig(ctx, ref.WithDigest("sha256:mmm"))
+	if err != nil || cfg["Healthcheck"] == nil || fmt.Sprint(cfg["Cmd"]) != "[serve]" {
+		t.Fatalf("ImageConfig = %v, %v", cfg, err)
 	}
 	if _, err := c.Digest(ctx, ref.WithTag("missing")); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing tag: %v", err)

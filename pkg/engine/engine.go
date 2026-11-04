@@ -225,6 +225,32 @@ func (ct *Container) Labels() map[string]string {
 	return out
 }
 
+// ManifestDigest returns the platform manifest digest the container was
+// created from (Engine API 1.48+, containerd image store), or "" if the
+// daemon does not report it.
+func (c *Client) ManifestDigest(ctx context.Context, id string) (string, error) {
+	var ct struct {
+		ImageManifestDescriptor *struct {
+			Digest string `json:"digest"`
+		} `json:"ImageManifestDescriptor"`
+	}
+	// Asked at 1.48 explicitly; older daemons reject the version and we report "".
+	u := strings.Replace(c.base, "/"+APIVersion, "/v1.48", 1) + "/containers/" + url.PathEscape(id) + "/json"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return "", err
+	}
+	res, err := c.http.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = res.Body.Close() }()
+	if res.StatusCode != http.StatusOK || json.NewDecoder(res.Body).Decode(&ct) != nil || ct.ImageManifestDescriptor == nil {
+		return "", nil
+	}
+	return ct.ImageManifestDescriptor.Digest, nil
+}
+
 // Inspect reads one container.
 func (c *Client) Inspect(ctx context.Context, id string) (*Container, error) {
 	var ct Container
