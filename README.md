@@ -40,6 +40,24 @@ Every flag can also be set as an environment variable, `NEPTIDE_<FLAG>`; for exa
 
 `--interval 6h` · `--once` · `--monitor-only` · `--all` · `--track` · `--health-timeout` · `--stable 15s` · `--swarm-timeout 15m` · `--containers` / `--services` · `--notify <urls>` · `--notify-on available,beyond_track,updated,rolled_back,failed` · `--docker-config` · `--insecure-registries` · `--log-json`
 
+### Private registries
+
+neptide reads credentials from a Docker `config.json` (`--docker-config`, default `$DOCKER_CONFIG/config.json` or `~/.docker/config.json`): a `credHelpers` entry for the registry first, then `credsStore`, as Docker picks them. One deliberate difference: when the helper is missing, fails or knows nothing about the registry, neptide still tries the inline `auths`, where Docker would not. So a config copied from a desktop (`credsStore: desktop`) can carry inline tokens for neptide.
+
+Credential helpers are programs named `docker-credential-<name>` on `PATH`; neptide runs them as `docker-credential-<name> get`. Answers are reused for 5 minutes, so short-lived tokens (ECR, GCR) stay fresh. A helper that is not installed is logged once; one that fails or takes longer than 30 seconds is logged, and neptide falls back to inline auths, then anonymous access. Mount helpers into `/usr/local/bin`, the image's `PATH`. Identity tokens (`"Username": "<token>"`, used by some OAuth logins) are not supported yet.
+
+The image is `FROM scratch`, so a helper must be a static binary you mount into it, such as `docker-credential-ecr-login` or `docker-credential-gcr`:
+
+```yaml
+    volumes:
+      - ./config.json:/config/config.json:ro
+      - /usr/local/bin/docker-credential-ecr-login:/usr/local/bin/docker-credential-ecr-login:ro
+    environment:
+      NEPTIDE_DOCKER_CONFIG_FILE: /config/config.json
+```
+
+Desktop keychains (`pass`, `secretservice`, `osxkeychain`) need a user session and do not work in the container. For those, run neptide natively or put inline credentials (a read-only token) in the config.json you mount.
+
 ## How an update runs
 
 **Container:**
