@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -22,6 +24,7 @@ import (
 	"github.com/nicholas-fedor/shoutrrr"
 	"github.com/nicholas-fedor/shoutrrr/pkg/types"
 
+	"github.com/Serraniel/neptide/internal/metrics"
 	"github.com/Serraniel/neptide/internal/updater"
 	"github.com/Serraniel/neptide/pkg/engine"
 	"github.com/Serraniel/neptide/pkg/registry"
@@ -94,6 +97,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	dockerConfig := fs.String("docker-config", env("DOCKER_CONFIG_FILE", defaultDockerConfig()), "Docker config.json with registry credentials")
 	insecure := fs.String("insecure-registries", env("INSECURE_REGISTRIES", ""), "comma separated registry hosts reached over plain HTTP")
 	jsonLog := fs.Bool("log-json", envBool("LOG_JSON", false), "log as JSON")
+	metricsAddr := fs.String("metrics-listen", env("METRICS_LISTEN", ""), "serve Prometheus metrics on this address, e.g. :9090 (off when empty)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -150,10 +154,32 @@ func run(args []string, stdout, stderr io.Writer) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	m := metrics.New(buildVersion)
+	if *metricsAddr != "" && *once {
+		log.Warn("--metrics-listen is ignored with --once")
+	} else if *metricsAddr != "" {
+		srv := &http.Server{Addr: *metricsAddr, Handler: m.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second}
+		ln, err := net.Listen("tcp", *metricsAddr)
+		if err != nil {
+			return fmt.Errorf("metrics: %w", err)
+		}
+		go func() {
+			if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Error("metrics server stopped", "err", err)
+			}
+		}()
+		defer func() { _ = srv.Close() }()
+		log.Info("metrics on " + ln.Addr().String() + "/metrics")
+	}
 	log.Info("neptide started", "version", buildVersion, "interval", interval.String(), "monitor_only", *monitor)
 	for {
-		if _, err := u.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		start := time.Now()
+		events, err := u.Run(ctx)
+		if err != nil && !errors.Is(err, context.Canceled) {
 			log.Error("cycle failed", "err", err)
+		}
+		if !errors.Is(err, context.Canceled) {
+			m.Cycle(start, events, err)
 		}
 		if *once {
 			return nil
