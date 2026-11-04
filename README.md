@@ -42,9 +42,9 @@ Every flag can also be set as an environment variable, `NEPTIDE_<FLAG>`; for exa
 
 ### Private registries
 
-neptide reads credentials from a Docker `config.json` (`--docker-config`, default `$DOCKER_CONFIG/config.json` or `~/.docker/config.json`), the same way Docker does: a `credHelpers` entry for the registry first, then `credsStore`, then the inline `auths` that `docker login` writes without a helper.
+neptide reads credentials from a Docker `config.json` (`--docker-config`, default `$DOCKER_CONFIG/config.json` or `~/.docker/config.json`): a `credHelpers` entry for the registry first, then `credsStore`, as Docker picks them. One deliberate difference: when the helper is missing, fails or knows nothing about the registry, neptide still tries the inline `auths`, where Docker would not. So a config copied from a desktop (`credsStore: desktop`) can carry inline tokens for neptide.
 
-Credential helpers are programs named `docker-credential-<name>` on `PATH`; neptide runs them as `docker-credential-<name> get`. Answers are reused for 5 minutes, so short-lived tokens (ECR, GCR) stay fresh. A helper that is missing or fails is logged and the registry is accessed anonymously. Identity tokens (`"Username": "<token>"`, used by some OAuth logins) are not supported yet.
+Credential helpers are programs named `docker-credential-<name>` on `PATH`; neptide runs them as `docker-credential-<name> get`. Answers are reused for 5 minutes, so short-lived tokens (ECR, GCR) stay fresh. A helper that is not installed is logged once; one that fails or takes longer than 30 seconds is logged, and neptide falls back to inline auths, then anonymous access. Mount helpers into `/usr/local/bin`, the image's `PATH`. Identity tokens (`"Username": "<token>"`, used by some OAuth logins) are not supported yet.
 
 The image is `FROM scratch`, so a helper must be a static binary you mount into it, such as `docker-credential-ecr-login` or `docker-credential-gcr`:
 

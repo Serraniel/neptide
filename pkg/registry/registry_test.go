@@ -12,8 +12,10 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseRef(t *testing.T) {
@@ -244,5 +246,63 @@ func TestCredentialHelperExec(t *testing.T) {
 	}
 	if c := cfg.Lookup("other.example.org"); c != nil {
 		t.Errorf("unknown server: %+v", c)
+	}
+}
+
+func TestCredentialHelperPrecedenceAndMissing(t *testing.T) {
+	cfg := &DockerConfig{CredsStore: "store", CredHelpers: map[string]string{"ghcr.io": "gh", "https://quay.io": "missing"}}
+	cfg.Auths = map[string]struct {
+		Auth          string `json:"auth"`
+		Username      string `json:"username"`
+		Password      string `json:"password"`
+		IdentityToken string `json:"identitytoken"`
+	}{"quay.io": {Username: "inline", Password: "pw"}}
+	var asked []string
+	cfg.Run = func(_ context.Context, helper, server string) ([]byte, error) {
+		asked = append(asked, helper+" "+server)
+		switch helper {
+		case "gh":
+			return []byte(`{"Username":"from-helper","Secret":"s"}`), nil
+		case "missing":
+			return nil, fmt.Errorf("%w: exec: no such file", errHelperMissing)
+		}
+		return []byte(`{"Username":"from-store","Secret":"s"}`), nil
+	}
+	var logged []string
+	cfg.Log = func(m string) { logged = append(logged, m) }
+	if c := cfg.Lookup("ghcr.io"); c == nil || c.Username != "from-helper" {
+		t.Errorf("credHelpers must win over credsStore: %+v", c)
+	}
+	for range 2 {
+		cfg.cache = nil // as if 5 minutes passed
+		if c := cfg.Lookup("quay.io"); c == nil || c.Username != "inline" {
+			t.Errorf("a missing helper falls back to inline auths: %+v", c)
+		}
+	}
+	if len(logged) != 1 || !strings.Contains(logged[0], "not installed") {
+		t.Errorf("a missing helper must be reported once: %v", logged)
+	}
+	if !slices.Contains(asked, "missing quay.io") {
+		t.Errorf("helper must be asked for the bare host, asked %v", asked)
+	}
+}
+
+func TestCredentialHelperTimeout(t *testing.T) {
+	dir := t.TempDir()
+	// Leaves a child holding stdout open after the helper itself is killed.
+	script := "#!/bin/sh\nsleep 30 &\nsleep 30\n"
+	if err := os.WriteFile(filepath.Join(dir, "docker-credential-slow"), []byte(script), 0o700); err != nil { //nolint:gosec // must be executable
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	old := helperTimeout
+	helperTimeout = 300 * time.Millisecond
+	defer func() { helperTimeout = old }()
+	start := time.Now()
+	if c := (&DockerConfig{CredsStore: "slow"}).Lookup("reg.example.org"); c != nil {
+		t.Errorf("creds = %+v", c)
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Errorf("helper timeout not enforced: took %s", d)
 	}
 }

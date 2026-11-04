@@ -38,8 +38,9 @@ type DockerConfig struct {
 	// docker-credential-<name> get from PATH.
 	Run func(ctx context.Context, helper, server string) ([]byte, error) `json:"-"`
 
-	mu    sync.Mutex
-	cache map[string]cached
+	mu      sync.Mutex
+	cache   map[string]cached
+	missing map[string]bool // helpers already reported as not installed
 }
 
 type cached struct {
@@ -87,8 +88,10 @@ func spellings(host string) []string {
 	return want
 }
 
-// Lookup returns credentials for host, as Docker resolves them: a
-// credHelpers entry for the host, else the credsStore, else inline auths.
+// Lookup returns credentials for host: a credHelpers entry for the host,
+// else the credsStore, as Docker picks them. Unlike Docker, when the helper
+// has nothing or fails, inline auths are still tried, so a config.json from
+// a desktop (credsStore: desktop) can carry inline tokens for neptide.
 func (c *DockerConfig) Lookup(host string) *Credentials {
 	if c == nil {
 		return nil
@@ -127,7 +130,7 @@ func (c *DockerConfig) helperFor(host string) (helper, server string) {
 		k := strings.TrimSuffix(key, "/")
 		for _, w := range spellings(host) {
 			if k == strings.TrimSuffix(w, "/") {
-				return h, key
+				return h, server // the name docker passes, whatever the key spelling
 			}
 		}
 	}
@@ -142,7 +145,19 @@ func (c *DockerConfig) fromHelper(helper, server string) *Credentials {
 		return e.c
 	}
 	creds, err := c.ask(helper, server)
-	if err != nil && c.Log != nil {
+	switch {
+	case err == nil || c.Log == nil:
+	case errors.Is(err, errHelperMissing):
+		// Common with a config.json copied from a desktop (credsStore:
+		// desktop): say it once, not for every registry on every run.
+		if !c.missing[helper] {
+			if c.missing == nil {
+				c.missing = map[string]bool{}
+			}
+			c.missing[helper] = true
+			c.Log(fmt.Sprintf("credential helper docker-credential-%s is not installed; using inline auths and anonymous access instead", helper))
+		}
+	default:
 		c.Log(fmt.Sprintf("credential helper docker-credential-%s for %s: %v", helper, server, err))
 	}
 	if c.cache == nil {
@@ -155,12 +170,18 @@ func (c *DockerConfig) fromHelper(helper, server string) *Credentials {
 // errNotFound is the helper protocol's answer for unknown servers.
 var errNotFound = errors.New("credentials not found in native keychain")
 
+// errHelperMissing means the helper binary is not on PATH.
+var errHelperMissing = errors.New("not found on PATH")
+
+// helperTimeout bounds one helper run, including processes it leaves behind.
+var helperTimeout = 30 * time.Second
+
 func (c *DockerConfig) ask(helper, server string) (*Credentials, error) {
 	run := c.Run
 	if run == nil {
 		run = runHelper
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), helperTimeout)
 	defer cancel()
 	out, err := run(ctx, helper, server)
 	if err != nil {
@@ -188,12 +209,15 @@ func (c *DockerConfig) ask(helper, server string) (*Credentials, error) {
 func runHelper(ctx context.Context, helper, server string) ([]byte, error) {
 	bin, err := exec.LookPath("docker-credential-" + helper)
 	if err != nil {
-		return nil, fmt.Errorf("not found on PATH: %w", err)
+		return nil, fmt.Errorf("%w: %w", errHelperMissing, err)
 	}
 	var stdout, stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, bin, "get") //nolint:gosec // helper name is validated, as docker runs it
 	cmd.Stdin = strings.NewReader(server)
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	// A wrapper script may leave a child holding stdout open; without this,
+	// Run would wait for that child and the timeout would not hold.
+	cmd.WaitDelay = time.Second
 	if err := cmd.Run(); err != nil {
 		msg := strings.TrimSpace(stdout.String() + " " + stderr.String())
 		return []byte(msg), fmt.Errorf("%w: %s", err, msg)
