@@ -19,6 +19,10 @@ const (
 	LabelMode          = "neptide.mode"
 	LabelHealthTimeout = "neptide.health-timeout"
 	LabelSelf          = "neptide.self"
+	// LabelSnapshot=true snapshots volumes before an update and restores
+	// them on rollback; LabelSnapshotExclude lists mount paths to skip.
+	LabelSnapshot        = "neptide.snapshot"
+	LabelSnapshotExclude = "neptide.snapshot.exclude"
 )
 
 // Mode is what happens when an update is found.
@@ -37,6 +41,7 @@ type Policy struct {
 	Track         version.Track
 	Mode          Mode
 	HealthTimeout time.Duration
+	Snapshot      bool
 }
 
 // PolicyFrom reads labels on top of defaults. Invalid labels are errors, not
@@ -64,6 +69,13 @@ func PolicyFrom(labels map[string]string, def Policy) (Policy, error) {
 		default:
 			return p, fmt.Errorf("%s=%q: want update or notify", LabelMode, v)
 		}
+	}
+	if v, ok := labels[LabelSnapshot]; ok {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return p, fmt.Errorf("%s=%q: %w", LabelSnapshot, v, err)
+		}
+		p.Snapshot = b
 	}
 	if v, ok := labels[LabelHealthTimeout]; ok {
 		d, err := time.ParseDuration(v)

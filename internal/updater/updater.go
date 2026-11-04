@@ -15,6 +15,7 @@ import (
 	"github.com/Serraniel/neptide/pkg/engine"
 	"github.com/Serraniel/neptide/pkg/registry"
 	"github.com/Serraniel/neptide/pkg/rollout"
+	"github.com/Serraniel/neptide/pkg/snapshot"
 	"github.com/Serraniel/neptide/pkg/version"
 )
 
@@ -69,6 +70,8 @@ type Options struct {
 	// SkipContainers and SkipServices limit a cycle to one kind of target.
 	// In a swarm, run exactly one instance with services enabled.
 	SkipContainers, SkipServices bool
+	// SnapshotKeep is how many data snapshots per container are kept.
+	SnapshotKeep int
 	// ForceNotify reports updates without applying them, whatever labels say.
 	ForceNotify bool
 	// SwarmTimeout bounds one service update.
@@ -237,7 +240,12 @@ func (u *Updater) container(ctx context.Context, id, name string, labels map[str
 	gate := u.Opts.Gate
 	gate.Timeout = pol.HealthTimeout
 	// Recreate by tag, as compose would; the pull resolves the same digest.
-	err = rollout.RecreateContainer(ctx, u.Engine, id, next.WithDigest("").String(), u.auth(next.Host), gate, u.oldConfig(ref))
+	rec := rollout.Recreate{Auth: u.auth(next.Host), Gate: gate, OldConfig: u.oldConfig(ref)}
+	if pol.Snapshot {
+		rec.Snapshots = &snapshot.Snapshotter{Engine: u.Engine, Keep: u.Opts.SnapshotKeep}
+		rec.Exclude = snapshot.Excludes(labels[rollout.LabelSnapshotExclude])
+	}
+	err = rollout.RecreateContainer(ctx, u.Engine, id, next.WithDigest("").String(), rec)
 	switch {
 	case errors.Is(err, rollout.ErrRolledBack):
 		emit(Event{Kind: RolledBack, Target: name, From: from, To: to, Err: err})

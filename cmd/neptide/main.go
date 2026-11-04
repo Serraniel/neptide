@@ -73,6 +73,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 	monitor := fs.Bool("monitor-only", envBool("MONITOR_ONLY", false), "report updates, never apply them (overrides neptide.mode)")
 	containers := fs.Bool("containers", envBool("CONTAINERS", true), "update standalone and compose containers on this node")
 	services := fs.Bool("services", envBool("SERVICES", true), "update swarm services (only acts on a manager; run one such instance per swarm)")
+	snap := fs.Bool("snapshot", envBool("SNAPSHOT", false), "snapshot volumes before every container update and restore them on rollback (per container: neptide.snapshot)")
+	snapKeep := fs.Int("snapshot-keep", 3, "data snapshots kept per container")
 	all := fs.Bool("all", envBool("ALL", false), "include containers without neptide.enable=true")
 	track := fs.String("track", env("TRACK", "digest"), "default track: digest, patch, minor, major")
 	healthTimeout := fs.Duration("health-timeout", envDuration("HEALTH_TIMEOUT", 2*time.Minute), "how long a new container may take to become healthy")
@@ -129,7 +131,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 			SkipContainers: !*containers,
 			SkipServices:   !*services,
 			ForceNotify:    *monitor, // wins over neptide.mode=update labels
-			Defaults:       rollout.Policy{Track: tr, Mode: mode, HealthTimeout: *healthTimeout},
+			Defaults:       rollout.Policy{Track: tr, Mode: mode, HealthTimeout: *healthTimeout, Snapshot: *snap},
+			SnapshotKeep:   *snapKeep,
 			Gate:           rollout.Gate{Timeout: *healthTimeout, Stable: *stable},
 			SwarmTimeout:   *swarmTimeout,
 		},

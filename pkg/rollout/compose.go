@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Serraniel/neptide/pkg/engine"
+	"github.com/Serraniel/neptide/pkg/snapshot"
 )
 
 // ErrRolledBack means the new version failed its health gate and the old one
@@ -29,6 +30,7 @@ type Engine interface {
 	Remove(ctx context.Context, id string) error
 	InspectService(ctx context.Context, id string) (*engine.Service, error)
 	UpdateService(ctx context.Context, s *engine.Service, auth *engine.RegistryAuth) error
+	snapshot.Engine
 }
 
 // Gate decides when a started container counts as healthy.
@@ -61,11 +63,24 @@ func (g Gate) withDefaults() Gate {
 // longer in the local store (see RecreateContainer). May be nil.
 type OldConfig func(ctx context.Context, old *engine.Container) (map[string]any, error)
 
+// Recreate tunes RecreateContainer.
+type Recreate struct {
+	Auth      *engine.RegistryAuth
+	Gate      Gate
+	OldConfig OldConfig
+	// Snapshots, when set, copies the stopped old container's volumes and bind
+	// mounts before the new one starts, and restores them on rollback.
+	Snapshots *snapshot.Snapshotter
+	// Exclude lists mount destinations not to snapshot (large media).
+	Exclude []string
+}
+
 // RecreateContainer replaces container id with one running newRef, keeping
 // its configuration. The old container is renamed and stopped, not removed,
-// until the new one passes the gate; otherwise it is restored.
-func RecreateContainer(ctx context.Context, e Engine, id, newRef string, auth *engine.RegistryAuth, gate Gate, oldConfig OldConfig) error {
-	gate = gate.withDefaults()
+// until the new one passes the gate; otherwise it is restored, with its data
+// as it was when it stopped if snapshots are enabled.
+func RecreateContainer(ctx context.Context, e Engine, id, newRef string, o Recreate) error {
+	gate, auth, oldConfig := o.Gate.withDefaults(), o.Auth, o.OldConfig
 	old, err := e.Inspect(ctx, id)
 	if err != nil {
 		return err
@@ -111,13 +126,24 @@ func RecreateContainer(ctx context.Context, e Engine, id, newRef string, auth *e
 	if err := e.Rename(ctx, old.ID, parked); err != nil {
 		return fmt.Errorf("park old container: %w", err)
 	}
+	var snap *snapshot.Snapshot
 	restore := func(cause error, newID string) error {
 		// Use a fresh context: the caller's may be what was cancelled.
-		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Minute)
 		defer cancel()
 		var errs []error
 		if newID != "" {
 			errs = append(errs, e.Remove(rctx, newID))
+		}
+		// The new version may have migrated the data: put the old data back
+		// before the old version starts on it.
+		if snap != nil {
+			if err := errors.Join(errs...); err != nil {
+				return fmt.Errorf("update failed (%w) and the new container could not be removed, so its data cannot be restored; the old container stays stopped as %q: %w", cause, parked, err)
+			}
+			if err := o.Snapshots.Restore(rctx, snap); err != nil {
+				return fmt.Errorf("update failed (%w) and restoring the data snapshot failed; the old container stays stopped as %q so it does not run on migrated data: %w", cause, parked, err)
+			}
 		}
 		errs = append(errs, e.Rename(rctx, old.ID, name))
 		if old.State.Running {
@@ -132,6 +158,13 @@ func RecreateContainer(ctx context.Context, e Engine, id, newRef string, auth *e
 
 	if err := e.Stop(ctx, old.ID, stopTimeout); err != nil {
 		return restore(fmt.Errorf("stop old container: %w", err), "")
+	}
+	if o.Snapshots != nil {
+		// Stopped, so the copy is consistent.
+		if snap, err = o.Snapshots.Take(ctx, old, o.Exclude); err != nil {
+			snap = nil
+			return restore(fmt.Errorf("snapshot before update: %w", err), "")
+		}
 	}
 	newID, err := e.Create(ctx, name, config, old.HostConfig, networks)
 	if err != nil {
