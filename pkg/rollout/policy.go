@@ -43,6 +43,8 @@ type Policy struct {
 	Mode          Mode
 	HealthTimeout time.Duration
 	Snapshot      bool
+	// Window limits when updates are applied; empty means any time.
+	Window Windows
 }
 
 // PolicyFrom reads labels on top of defaults. Invalid labels are errors, not
@@ -77,6 +79,13 @@ func PolicyFrom(labels map[string]string, def Policy) (Policy, error) {
 			return p, fmt.Errorf("%s=%q: %w", LabelSnapshot, v, err)
 		}
 		p.Snapshot = b
+	}
+	if v, ok := labels[LabelWindow]; ok {
+		w, err := ParseWindows(v)
+		if err != nil {
+			return p, fmt.Errorf("%s: %w", LabelWindow, err)
+		}
+		p.Window = w // an empty label value lifts a default window
 	}
 	if v, ok := labels[LabelHealthTimeout]; ok {
 		d, err := time.ParseDuration(v)

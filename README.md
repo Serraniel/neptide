@@ -28,6 +28,7 @@ Swarm: see [stack.yaml](stack.yaml). It runs one service updater on a manager, p
 | `neptide.track` | `digest`, `patch`, `minor`, `major` | `--track` (`digest`) |
 | `neptide.mode` | `update`, `notify` | `update`; `--monitor-only` wins |
 | `neptide.health-timeout` | duration, e.g. `3m` | `--health-timeout` (`2m`) |
+| `neptide.window` | e.g. `Sat,Sun 03:00-05:00`, `daily 02:00-04:00; Wed 12:00-13:00` | `--window` (any time): apply updates only then, report them as available otherwise |
 | `neptide.snapshot` | `true` / `false` | `--snapshot` (off): copy volumes and bind mounts before an update, restore them on rollback |
 | `neptide.snapshot.binds` | `true` / `false` | `false`: only named volumes are snapshotted |
 | `neptide.snapshot.exclude` | mount paths, e.g. `/media,/cache` | none |
@@ -38,7 +39,7 @@ On Swarm, put labels under `deploy.labels`, the service labels. Images pinned to
 
 Every flag can also be set as an environment variable, `NEPTIDE_<FLAG>`; for example `--monitor-only` becomes `NEPTIDE_MONITOR_ONLY=true`.
 
-`--interval 6h` · `--once` · `--monitor-only` · `--all` · `--track` · `--health-timeout` · `--stable 15s` · `--swarm-timeout 15m` · `--containers` / `--services` · `--notify <urls>` · `--notify-on available,beyond_track,updated,rolled_back,failed` · `--docker-config` · `--insecure-registries` · `--metrics-listen` · `--log-json`
+`--interval 6h` · `--window` · `--once` · `--monitor-only` · `--all` · `--track` · `--health-timeout` · `--stable 15s` · `--swarm-timeout 15m` · `--containers` / `--services` · `--notify <urls>` · `--notify-on available,beyond_track,updated,rolled_back,failed` · `--docker-config` · `--insecure-registries` · `--metrics-listen` · `--log-json`
 
 ### Metrics
 

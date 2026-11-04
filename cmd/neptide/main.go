@@ -20,6 +20,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	_ "time/tzdata" // the image has no zoneinfo; windows follow TZ
 
 	"github.com/nicholas-fedor/shoutrrr"
 	"github.com/nicholas-fedor/shoutrrr/pkg/types"
@@ -85,6 +86,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	monitor := fs.Bool("monitor-only", envBool("MONITOR_ONLY", false), "report updates, never apply them (overrides neptide.mode)")
 	containers := fs.Bool("containers", envBool("CONTAINERS", true), "update standalone and compose containers on this node")
 	services := fs.Bool("services", envBool("SERVICES", true), "update swarm services (only acts on a manager; run one such instance per swarm)")
+	windowSpec := fs.String("window", env("WINDOW", ""), "default maintenance window for applying updates, e.g. \"Sat,Sun 03:00-05:00\" (local time, TZ); per container: neptide.window")
 	snap := fs.Bool("snapshot", envBool("SNAPSHOT", false), "snapshot volumes before every container update and restore them on rollback (per container: neptide.snapshot)")
 	snapKeep := fs.Int("snapshot-keep", envInt("SNAPSHOT_KEEP", 3), "data snapshots kept per container")
 	all := fs.Bool("all", envBool("ALL", false), "include containers without neptide.enable=true")
@@ -111,6 +113,10 @@ func run(args []string, stdout, stderr io.Writer) error {
 	tr, err := version.ParseTrack(*track)
 	if err != nil {
 		return err
+	}
+	window, err := rollout.ParseWindows(*windowSpec)
+	if err != nil {
+		return fmt.Errorf("--window: %w", err)
 	}
 	mode := rollout.ModeUpdate
 	if *monitor {
@@ -145,7 +151,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 			SkipContainers: !*containers,
 			SkipServices:   !*services,
 			ForceNotify:    *monitor, // wins over neptide.mode=update labels
-			Defaults:       rollout.Policy{Track: tr, Mode: mode, HealthTimeout: *healthTimeout, Snapshot: *snap},
+			Defaults:       rollout.Policy{Track: tr, Mode: mode, HealthTimeout: *healthTimeout, Snapshot: *snap, Window: window},
 			SnapshotKeep:   *snapKeep,
 			Gate:           rollout.Gate{Timeout: *healthTimeout, Stable: *stable},
 			SwarmTimeout:   *swarmTimeout,

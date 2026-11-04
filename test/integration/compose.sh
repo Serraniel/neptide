@@ -18,6 +18,12 @@ build v1 "test -f /version"
 docker run -d --name neptide-it-app --label neptide.enable=true -e FOO=bar --restart unless-stopped $IMG >/dev/null
 echo "== up to date"; run_neptide
 build v2 "test -f /version"
+# A window that opens in two hours: the update must wait.
+closed="daily $(date -d '+2 hour' +%H:%M)-$(date -d '+2 hour 1 min' +%H:%M)"
+echo "== outside the maintenance window -> expect no update"
+out=$(NEPTIDE_WINDOW="$closed" run_neptide); echo "$out"
+echo "$out" | grep -q "waits for the maintenance window" || fail "closed window not reported"
+[ "$(docker exec neptide-it-app cat /version)" = v1 ] || fail "updated outside the maintenance window"
 echo "== rebuilt under same tag -> expect update"; run_neptide
 [ "$(docker exec neptide-it-app cat /version)" = v2 ] || fail "not updated to v2"
 docker inspect -f '{{range .Config.Env}}{{.}} {{end}}' neptide-it-app | grep -q FOO=bar || fail "env lost"

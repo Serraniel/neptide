@@ -39,6 +39,8 @@ type Event struct {
 	From   string
 	To     string
 	Err    error
+	// Note explains an Available event in update mode, e.g. a closed window.
+	Note string
 }
 
 func (e Event) String() string {
@@ -48,7 +50,11 @@ func (e Event) String() string {
 	}
 	switch e.Kind {
 	case Available:
-		return fmt.Sprintf("Update available for %s %s: %s → %s", what, e.Target, e.From, e.To)
+		s := fmt.Sprintf("Update available for %s %s: %s → %s", what, e.Target, e.From, e.To)
+		if e.Note != "" {
+			s += " (" + e.Note + ")"
+		}
+		return s
 	case Beyond:
 		return fmt.Sprintf("%s %s: %s is available, outside its update track (now %s)", what, e.Target, e.To, e.From)
 	case Updated:
@@ -85,6 +91,15 @@ type Updater struct {
 	Notify   func(Event)
 	Log      *slog.Logger
 	Opts     Options
+	// Now is the clock for maintenance windows (time.Now when nil).
+	Now func() time.Time
+}
+
+func (u *Updater) now() time.Time {
+	if u.Now != nil {
+		return u.Now()
+	}
+	return time.Now()
 }
 
 // Run performs one cycle and returns the events it produced.
@@ -313,6 +328,10 @@ func (u *Updater) container(ctx context.Context, name string, labels map[string]
 		emit(Event{Kind: Available, Target: name, From: from, To: to})
 		return
 	}
+	if !pol.Window.Open(u.now()) {
+		emit(Event{Kind: Available, Target: name, From: from, To: to, Note: "waits for the maintenance window " + pol.Window.String()})
+		return
+	}
 	gate := u.Opts.Gate
 	gate.Timeout = pol.HealthTimeout
 	// Recreate by tag, as compose would; the pull resolves the same digest.
@@ -370,6 +389,10 @@ func (u *Updater) service(ctx context.Context, svc *engine.Service, emit func(Ev
 	}
 	if pol.Mode == rollout.ModeNotify {
 		emit(Event{Kind: Available, Target: name, Swarm: true, From: from, To: to})
+		return
+	}
+	if !pol.Window.Open(u.now()) {
+		emit(Event{Kind: Available, Target: name, Swarm: true, From: from, To: to, Note: "waits for the maintenance window " + pol.Window.String()})
 		return
 	}
 	err = rollout.UpdateService(ctx, u.Engine, svc.ID, next.String(), u.auth(next.Host), u.Opts.SwarmTimeout)
