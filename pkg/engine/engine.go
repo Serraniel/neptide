@@ -167,6 +167,15 @@ func labelFilter(labels ...string) url.Values {
 	return url.Values{"filters": {string(f)}}
 }
 
+// DockerRoot returns the daemon's data directory.
+func (c *Client) DockerRoot(ctx context.Context) (string, error) {
+	var info struct {
+		DockerRootDir string `json:"DockerRootDir"`
+	}
+	err := c.json(ctx, http.MethodGet, "/info", nil, nil, &info)
+	return info.DockerRootDir, err
+}
+
 // ContainerSummary is one entry of GET /containers/json.
 type ContainerSummary struct {
 	ID     string            `json:"Id"`

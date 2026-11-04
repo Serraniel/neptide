@@ -242,8 +242,9 @@ func (u *Updater) container(ctx context.Context, id, name string, labels map[str
 	// Recreate by tag, as compose would; the pull resolves the same digest.
 	rec := rollout.Recreate{Auth: u.auth(next.Host), Gate: gate, OldConfig: u.oldConfig(ref)}
 	if pol.Snapshot {
-		rec.Snapshots = &snapshot.Snapshotter{Engine: u.Engine, Keep: u.Opts.SnapshotKeep}
+		rec.Snapshots = &snapshot.Snapshotter{Engine: u.Engine, Keep: u.Opts.SnapshotKeep, DockerRoot: u.dockerRoot(ctx)}
 		rec.Exclude = snapshot.Excludes(labels[rollout.LabelSnapshotExclude])
+		rec.Log = func(msg string) { u.Log.Warn(msg) }
 	}
 	err = rollout.RecreateContainer(ctx, u.Engine, id, next.WithDigest("").String(), rec)
 	switch {
@@ -317,6 +318,13 @@ func (u *Updater) oldConfig(ref registry.Ref) rollout.OldConfig {
 		}
 		return u.Registry.ImageConfig(ctx, ref.WithDigest(d))
 	}
+}
+
+func (u *Updater) dockerRoot(ctx context.Context) string {
+	if root, err := u.Engine.DockerRoot(ctx); err == nil && root != "" {
+		return root
+	}
+	return "/var/lib/docker"
 }
 
 func (u *Updater) auth(host string) *engine.RegistryAuth {

@@ -48,7 +48,14 @@ Every flag can also be set as an environment variable, `NEPTIDE_<FLAG>`; for exa
 4. Start it and wait for the health gate.
 5. On success, remove the old container. On failure, remove the new one, then rename and start the old one.
 
-**With `neptide.snapshot=true`,** step 2 also copies every volume and bind mount of the stopped container into snapshot volumes (`neptide-snap-*`, the last 3 kept). A rollback restores them before the old container starts, so it never runs on data the new version has already migrated. If the restore fails, the old container stays stopped instead of starting on that data.
+**With `neptide.snapshot=true`,** step 2 also copies the stopped container's writable volumes and bind mounts into snapshot volumes (`neptide-snap-*`, the last 3 kept). A rollback restores them before the old container starts, so it never runs on data the new version has already migrated. If the restore fails, the old container stays stopped instead of starting on that data.
+
+Snapshots never touch:
+- read-only mounts;
+- system paths (`/`, `/etc`, `/proc`, Docker's root, `docker.sock`);
+- data another running container mounts.
+
+Skipped mounts are logged. A snapshot that would leave less than 10 % free space is refused, and the update with it. Copies keep ownership, xattrs, ACLs, hardlinks and sparse files.
 
 **Service:**
 1. Change the image to `name:tag@digest`, with `update_config` defaulted as described above.

@@ -73,6 +73,8 @@ type Recreate struct {
 	Snapshots *snapshot.Snapshotter
 	// Exclude lists mount destinations not to snapshot (large media).
 	Exclude []string
+	// Log receives notes such as skipped mounts (may be nil).
+	Log func(msg string)
 }
 
 // RecreateContainer replaces container id with one running newRef, keeping
@@ -126,18 +128,32 @@ func RecreateContainer(ctx context.Context, e Engine, id, newRef string, o Recre
 	if err := e.Rename(ctx, old.ID, parked); err != nil {
 		return fmt.Errorf("park old container: %w", err)
 	}
+	if o.Snapshots != nil {
+		// Before stopping anything: a pull must not add downtime, and an
+		// offline host must fail while the old container still runs.
+		if err := o.Snapshots.Prepare(ctx); err != nil {
+			_ = e.Rename(context.WithoutCancel(ctx), old.ID, name)
+			return err
+		}
+	}
 	var snap *snapshot.Snapshot
+	newStarted := false
 	restore := func(cause error, newID string) error {
 		// Use a fresh context: the caller's may be what was cancelled.
-		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Minute)
+		timeout := 10 * time.Minute
+		if snap != nil {
+			timeout = snap.RestoreTimeout()
+		}
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
 		defer cancel()
 		var errs []error
 		if newID != "" {
 			errs = append(errs, e.Remove(rctx, newID))
 		}
 		// The new version may have migrated the data: put the old data back
-		// before the old version starts on it.
-		if snap != nil {
+		// before the old version starts on it. If it never started, the data
+		// is untouched and stays as it is.
+		if snap != nil && newStarted {
 			if err := errors.Join(errs...); err != nil {
 				return fmt.Errorf("update failed (%w) and the new container could not be removed, so its data cannot be restored; the old container stays stopped as %q: %w", cause, parked, err)
 			}
@@ -165,11 +181,17 @@ func RecreateContainer(ctx context.Context, e Engine, id, newRef string, o Recre
 			snap = nil
 			return restore(fmt.Errorf("snapshot before update: %w", err), "")
 		}
+		if o.Log != nil {
+			for _, s := range snap.Skipped {
+				o.Log("snapshot of " + name + " skips " + s)
+			}
+		}
 	}
 	newID, err := e.Create(ctx, name, config, old.HostConfig, networks)
 	if err != nil {
 		return restore(fmt.Errorf("create: %w", err), "")
 	}
+	newStarted = true // from here on the new version may have written data
 	if err := e.Start(ctx, newID); err != nil {
 		return restore(fmt.Errorf("start: %w", err), newID)
 	}
