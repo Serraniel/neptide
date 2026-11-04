@@ -70,7 +70,11 @@ func RecreateContainer(ctx context.Context, e Engine, id, newRef string, auth *e
 		return err
 	}
 	oldImage, err := e.InspectImage(ctx, old.Image)
-	if err != nil {
+	if engine.IsNotFound(err) {
+		// Untagged and gone from the image store: its defaults cannot be told
+		// apart from the user's settings, so every setting is kept as is.
+		oldImage = &engine.Image{ID: old.Image, Config: map[string]any{}}
+	} else if err != nil {
 		return fmt.Errorf("old image: %w", err)
 	}
 	newImage, err := e.InspectImage(ctx, newRef)

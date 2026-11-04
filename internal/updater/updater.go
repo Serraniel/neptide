@@ -196,14 +196,24 @@ func (u *Updater) container(ctx context.Context, id, name string, labels map[str
 	if err != nil || ref.Digest != "" {
 		return // built locally, or pinned to a digest on purpose
 	}
-	img, err := u.Engine.InspectImage(ctx, ct.Image)
-	if err != nil {
+	var running string
+	if img, err := u.Engine.InspectImage(ctx, ct.Image); err == nil {
+		running = repoDigest(img.RepoDigests, ref)
+		if running == "" {
+			return // no registry digest: a locally built image
+		}
+	} else if engine.IsNotFound(err) {
+		// The running image lost its tag (a newer one was pulled or built under
+		// it) and the containerd image store no longer resolves it by ID. The
+		// container is then behind its tag: leave running empty so the registry
+		// digest counts as an update. Locally built tags are still skipped.
+		tagged, terr := u.Engine.InspectImage(ctx, ct.ConfigImage())
+		if terr != nil || repoDigest(tagged.RepoDigests, ref) == "" {
+			return
+		}
+	} else {
 		fail(err)
 		return
-	}
-	running := repoDigest(img.RepoDigests, ref)
-	if running == "" {
-		return // no registry digest: a locally built image
 	}
 	next, beyond, err := u.plan(ctx, ref, running, pol.Track)
 	if err != nil {
