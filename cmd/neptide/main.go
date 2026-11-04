@@ -126,6 +126,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("docker config: %w", err)
 	}
+	creds.Log = func(msg string) { log.Warn(msg) }
 	reg.Creds = creds.Lookup
 
 	notifier, err := newNotifier(split(*notify), split(*notifyOn), log)

@@ -18,5 +18,7 @@ COPY --from=build /out/neptide /neptide
 # Unprivileged. Socket access comes from the docker group: run with
 # user: "65532:<docker gid>" (see compose.yaml).
 USER 65532:65532
+# Where mounted docker-credential-* helpers are found.
+ENV PATH=/usr/local/bin
 LABEL neptide.self=true
 ENTRYPOINT ["/neptide"]

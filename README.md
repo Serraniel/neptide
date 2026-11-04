@@ -40,6 +40,24 @@ Every flag can also be set as an environment variable, `NEPTIDE_<FLAG>`; for exa
 
 `--interval 6h` · `--once` · `--monitor-only` · `--all` · `--track` · `--health-timeout` · `--stable 15s` · `--swarm-timeout 15m` · `--containers` / `--services` · `--notify <urls>` · `--notify-on available,beyond_track,updated,rolled_back,failed` · `--docker-config` · `--insecure-registries` · `--log-json`
 
+### Private registries
+
+neptide reads credentials from a Docker `config.json` (`--docker-config`, default `$DOCKER_CONFIG/config.json` or `~/.docker/config.json`), the same way Docker does: a `credHelpers` entry for the registry first, then `credsStore`, then the inline `auths` that `docker login` writes without a helper.
+
+Credential helpers are programs named `docker-credential-<name>` on `PATH`; neptide runs them as `docker-credential-<name> get`. Answers are reused for 5 minutes, so short-lived tokens (ECR, GCR) stay fresh. A helper that is missing or fails is logged and the registry is accessed anonymously. Identity tokens (`"Username": "<token>"`, used by some OAuth logins) are not supported yet.
+
+The image is `FROM scratch`, so a helper must be a static binary you mount into it, such as `docker-credential-ecr-login` or `docker-credential-gcr`:
+
+```yaml
+    volumes:
+      - ./config.json:/config/config.json:ro
+      - /usr/local/bin/docker-credential-ecr-login:/usr/local/bin/docker-credential-ecr-login:ro
+    environment:
+      NEPTIDE_DOCKER_CONFIG_FILE: /config/config.json
+```
+
+Desktop keychains (`pass`, `secretservice`, `osxkeychain`) need a user session and do not work in the container. For those, run neptide natively or put inline credentials (a read-only token) in the config.json you mount.
+
 ## How an update runs
 
 **Container:**
