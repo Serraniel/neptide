@@ -155,7 +155,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	m := metrics.New(buildVersion)
-	if *metricsAddr != "" {
+	if *metricsAddr != "" && *once {
+		log.Warn("--metrics-listen is ignored with --once")
+	} else if *metricsAddr != "" {
 		srv := &http.Server{Addr: *metricsAddr, Handler: m.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second}
 		ln, err := net.Listen("tcp", *metricsAddr)
 		if err != nil {

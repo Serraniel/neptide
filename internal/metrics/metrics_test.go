@@ -32,6 +32,7 @@ func TestMetrics(t *testing.T) {
 		`neptide_events_total{kind="failed"} 0`,
 		`neptide_cycles_total{result="ok"} 1`,
 		`neptide_cycles_total{result="error"} 1`,
+		`neptide_cycles_total{result="partial"} 0`,
 		`neptide_last_cycle_timestamp_seconds 1800003600`,
 		`neptide_last_success_timestamp_seconds 1800000000`,
 		`neptide_updates_pending 1`,
@@ -46,5 +47,18 @@ func TestMetrics(t *testing.T) {
 	}
 	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/plain; version=0.0.4") {
 		t.Errorf("content type %q", ct)
+	}
+}
+
+func TestFailedTargetsAreNoSuccess(t *testing.T) {
+	m := New("v\t1\"x")
+	m.Cycle(time.Unix(100, 0), nil, nil)
+	m.Cycle(time.Unix(200, 0), []updater.Event{{Kind: updater.Failed, Target: "web"}}, nil)
+	var b strings.Builder
+	_, _ = m.WriteTo(&b)
+	for _, want := range []string{`neptide_cycles_total{result="partial"} 1`, "neptide_last_success_timestamp_seconds 100", `version="v` + "\t" + `1\"x"`} {
+		if !strings.Contains(b.String(), want) {
+			t.Errorf("missing %q in\n%s", want, b.String())
+		}
 	}
 }

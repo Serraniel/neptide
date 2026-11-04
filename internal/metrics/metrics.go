@@ -22,7 +22,7 @@ type Metrics struct {
 	mu        sync.Mutex
 	version   string
 	events    map[updater.EventKind]uint64
-	cycles    map[string]uint64 // ok | error
+	cycles    map[string]uint64 // ok | partial | error
 	lastStart time.Time
 	lastDur   time.Duration
 	lastOK    time.Time
@@ -39,10 +39,19 @@ func (m *Metrics) Cycle(start time.Time, events []updater.Event, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.lastStart, m.lastDur = start, time.Since(start)
+	failed := false
+	for _, e := range events {
+		failed = failed || e.Kind == updater.Failed || e.Kind == updater.RolledBack
+	}
+	// A cycle succeeds only if every target was handled: expired registry
+	// credentials fail each target but not the cycle itself.
 	result := "ok"
-	if err != nil {
+	switch {
+	case err != nil:
 		result = "error"
-	} else {
+	case failed:
+		result = "partial"
+	default:
 		m.lastOK = start
 	}
 	m.cycles[result]++
@@ -75,19 +84,19 @@ func (m *Metrics) WriteTo(w io.Writer) (int64, error) {
 		fmt.Fprintf(&b, "# HELP %s %s\n# TYPE %s %s\n", name, help, name, typ)
 	}
 	metric("neptide_build_info", "gauge", "Always 1; the version label says which neptide runs.")
-	fmt.Fprintf(&b, "neptide_build_info{version=%q} 1\n", m.version)
+	fmt.Fprintf(&b, "neptide_build_info{version=\"%s\"} 1\n", esc(m.version))
 
 	metric("neptide_events_total", "counter", "Update events by kind since start.")
 	for _, k := range kinds {
-		fmt.Fprintf(&b, "neptide_events_total{kind=%q} %d\n", k, m.events[k])
+		fmt.Fprintf(&b, "neptide_events_total{kind=\"%s\"} %d\n", k, m.events[k])
 	}
-	metric("neptide_cycles_total", "counter", "Finished update cycles by result.")
-	for _, r := range []string{"ok", "error"} {
-		fmt.Fprintf(&b, "neptide_cycles_total{result=%q} %d\n", r, m.cycles[r])
+	metric("neptide_cycles_total", "counter", "Finished update cycles: ok, partial (some targets failed or rolled back) or error (could not list targets).")
+	for _, r := range []string{"ok", "partial", "error"} {
+		fmt.Fprintf(&b, "neptide_cycles_total{result=\"%s\"} %d\n", r, m.cycles[r])
 	}
 	metric("neptide_last_cycle_timestamp_seconds", "gauge", "Start of the last cycle (0 before the first).")
 	fmt.Fprintf(&b, "neptide_last_cycle_timestamp_seconds %d\n", unix(m.lastStart))
-	metric("neptide_last_success_timestamp_seconds", "gauge", "Start of the last cycle that completed without error.")
+	metric("neptide_last_success_timestamp_seconds", "gauge", "Start of the last cycle in which every target was checked and handled without failure.")
 	fmt.Fprintf(&b, "neptide_last_success_timestamp_seconds %d\n", unix(m.lastOK))
 	metric("neptide_last_cycle_duration_seconds", "gauge", "Duration of the last cycle.")
 	fmt.Fprintf(&b, "neptide_last_cycle_duration_seconds %.3f\n", m.lastDur.Seconds())
@@ -102,7 +111,7 @@ func (m *Metrics) WriteTo(w io.Writer) (int64, error) {
 	sort.Strings(names)
 	for _, t := range names {
 		kind, name, _ := strings.Cut(t, "/")
-		fmt.Fprintf(&b, "neptide_update_pending{kind=%q,name=%q} 1\n", kind, name)
+		fmt.Fprintf(&b, "neptide_update_pending{kind=\"%s\",name=\"%s\"} 1\n", esc(kind), esc(name))
 	}
 	n, err := io.WriteString(w, b.String())
 	return int64(n), err
@@ -127,3 +136,7 @@ func (m *Metrics) Handler() http.Handler {
 	})
 	return mux
 }
+
+// esc escapes a label value the way the text format allows: only \\, \" and
+// \n are valid escapes (Go's %q would produce others and break the scrape).
+var esc = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`).Replace

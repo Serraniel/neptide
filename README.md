@@ -49,7 +49,7 @@ Every flag can also be set as an environment variable, `NEPTIDE_<FLAG>`; for exa
 - `updates_pending`, plus `update_pending{kind,name}` per container or service, show updates found but not applied;
 - `build_info{version}` is always 1.
 
-Alert on `time() - neptide_last_success_timestamp_seconds > 2 * <interval>` to notice a stuck or failing updater. The endpoint has no authentication and reveals container names, so keep it on an internal network.
+A cycle counts as a success only if every target was checked and handled; a failed or rolled-back target makes it `partial`. To notice a stuck or failing updater, alert on `time() - neptide_last_success_timestamp_seconds > 2 * <interval> + <longest cycle>` with a `for:` of a few minutes; a cycle with health gates or swarm updates can take a while, and the value is 0 until the first success. `increase(neptide_events_total{kind=~"failed|rolled_back"}[1h]) > 0` reports individual failures right away. The endpoint has no authentication and reveals container names, so keep it on an internal network.
 
 ### Private registries
 
