@@ -197,6 +197,12 @@ func (c *Client) Containers(ctx context.Context, labels ...string) ([]ContainerS
 	return out, c.json(ctx, http.MethodGet, "/containers/json", q, nil, &out)
 }
 
+// AllContainers lists every container, stopped ones included.
+func (c *Client) AllContainers(ctx context.Context) ([]ContainerSummary, error) {
+	var out []ContainerSummary
+	return out, c.json(ctx, http.MethodGet, "/containers/json", url.Values{"all": {"true"}}, nil, &out)
+}
+
 // Container is the subset of GET /containers/{id}/json we read, plus the raw
 // Config and HostConfig maps we pass back on recreate.
 type Container struct {

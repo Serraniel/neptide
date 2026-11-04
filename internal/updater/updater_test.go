@@ -19,7 +19,11 @@ func TestDependents(t *testing.T) {
 		c("vpn", "bridge"), c("torrent", "container:vpn-id"), c("indexer", "container:vpn-id"),
 		c("web", "app_default"), c("host", "host"),
 	})
-	if len(got) != 1 || !slices.Equal(got["vpn-id"], []string{"torrent", "indexer"}) {
+	var names []string
+	for _, d := range got["vpn-id"] {
+		names = append(names, d.Names[0])
+	}
+	if len(got) != 1 || !slices.Equal(names, []string{"/torrent", "/indexer"}) {
 		t.Errorf("dependents = %v", got)
 	}
 }

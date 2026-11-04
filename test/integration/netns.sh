@@ -8,8 +8,9 @@ set -u
 BIN=$(realpath "$1"); S=$(mktemp -d); R=127.0.0.1:15003; IMG=$R/neptide-netns-it:1
 fail() { echo "FAIL: $*"; cleanup; exit 1; }
 cleanup() {
-  docker rm -f neptide-netns-parent neptide-netns-parent-neptide-old neptide-netns-child neptide-netns-child-neptide-old neptide-netns-registry >/dev/null 2>&1
-  docker rmi -f $IMG >/dev/null 2>&1; rm -rf "$S"
+  docker rm -f neptide-netns-parent neptide-netns-parent-neptide-old neptide-netns-child neptide-netns-child-neptide-old \
+    neptide-netns-job neptide-netns-job-neptide-old neptide-netns-registry >/dev/null 2>&1
+  docker rmi -f $IMG neptide-netns-child:it >/dev/null 2>&1; rm -rf "$S"
 }
 cleanup; S=$(mktemp -d)
 docker run -d --name neptide-netns-registry -p $R:5000 registry:3.1 >/dev/null; sleep 2
@@ -25,8 +26,14 @@ joined() { # child is in the namespace of the container now called parent
 
 build v1 "test -f /version"
 docker run -d --name neptide-netns-parent --label neptide.enable=true $IMG >/dev/null
-# Not enabled itself: it must be followed anyway.
-docker run -d --name neptide-netns-child --network container:neptide-netns-parent -e KEEP=me alpine:3.23 sleep infinity >/dev/null
+# Not enabled itself: it must be followed anyway. Its image EXPOSEs a port,
+# like most apps behind a VPN container, which the daemon copies into the
+# container config and then refuses together with container networking.
+mkdir -p $S/child && printf 'FROM alpine:3.23\nEXPOSE 8080\nCMD ["sleep","infinity"]\n' > $S/child/Dockerfile
+docker build -q -t neptide-netns-child:it $S/child >/dev/null 2>&1
+docker run -d --name neptide-netns-child --network container:neptide-netns-parent -e KEEP=me neptide-netns-child:it >/dev/null
+# A stopped dependent, e.g. a job that runs now and then: it must be able to start later.
+docker create --name neptide-netns-job --network container:neptide-netns-parent alpine:3.23 sleep 1 >/dev/null
 has_net || fail "child has no network before the test"
 
 build v2 "test -f /version"
@@ -36,6 +43,9 @@ echo "$out" | grep -q "re-attached neptide-netns-child" || fail "child not repor
 joined || fail "child does not point at the new parent"
 has_net || fail "child lost its network after the parent's update"
 docker inspect -f '{{range .Config.Env}}{{.}} {{end}}' neptide-netns-child | grep -q KEEP=me || fail "child env lost"
+[ "$(docker inspect -f '{{.Config.Image}}' neptide-netns-child)" = neptide-netns-child:it ] || fail "child image changed"
+[ "$(docker inspect -f '{{.State.Status}}' neptide-netns-job)" = created ] || fail "stopped dependent was started"
+docker start neptide-netns-job >/dev/null 2>&1 || fail "stopped dependent cannot start after the parent's update"
 
 build v3 "false"
 echo "== parent rolled back -> child restarted into the restored namespace"; out=$(run_neptide); echo "$out"
