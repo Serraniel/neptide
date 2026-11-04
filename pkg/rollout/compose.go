@@ -57,21 +57,39 @@ func (g Gate) withDefaults() Gate {
 	return g
 }
 
+// OldConfig fetches the image config of a container whose image is no
+// longer in the local store (see RecreateContainer). May be nil.
+type OldConfig func(ctx context.Context, old *engine.Container) (map[string]any, error)
+
 // RecreateContainer replaces container id with one running newRef, keeping
 // its configuration. The old container is renamed and stopped, not removed,
 // until the new one passes the gate; otherwise it is restored.
-func RecreateContainer(ctx context.Context, e Engine, id, newRef string, auth *engine.RegistryAuth, gate Gate) error {
+func RecreateContainer(ctx context.Context, e Engine, id, newRef string, auth *engine.RegistryAuth, gate Gate, oldConfig OldConfig) error {
 	gate = gate.withDefaults()
 	old, err := e.Inspect(ctx, id)
 	if err != nil {
 		return err
 	}
+	// Inspect the old image before pulling: the pull may take its tag, and
+	// with the containerd image store an untagged image cannot be inspected.
+	oldImage, err := e.InspectImage(ctx, old.Image)
+	if engine.IsNotFound(err) {
+		// Its tag moved outside neptide (manual pull or build). Recreating
+		// without its defaults would carry them over, e.g. its HEALTHCHECK
+		// into the new image, so a fallback is required or we refuse.
+		if oldConfig == nil {
+			return fmt.Errorf("the running image is gone from the local image store; refusing to recreate without knowing its defaults")
+		}
+		cfg, ferr := oldConfig(ctx, old)
+		if ferr != nil {
+			return fmt.Errorf("the running image is gone from the local image store and its config could not be fetched (%w); refusing to recreate", ferr)
+		}
+		oldImage = &engine.Image{ID: old.Image, Config: cfg}
+	} else if err != nil {
+		return fmt.Errorf("old image: %w", err)
+	}
 	if err := e.Pull(ctx, newRef, auth); err != nil {
 		return err
-	}
-	oldImage, err := e.InspectImage(ctx, old.Image)
-	if err != nil {
-		return fmt.Errorf("old image: %w", err)
 	}
 	newImage, err := e.InspectImage(ctx, newRef)
 	if err != nil {
