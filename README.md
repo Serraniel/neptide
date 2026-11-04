@@ -52,6 +52,12 @@ Every flag can also be set as an environment variable, `NEPTIDE_<FLAG>`; for exa
 
 A cycle counts as a success only if every target was checked and handled; a failed or rolled-back target makes it `partial`. To notice a stuck or failing updater, alert on `time() - neptide_last_success_timestamp_seconds > 2 * <interval> + <longest cycle>` with a `for:` of a few minutes; a cycle with health gates or swarm updates can take a while, and the value is 0 until the first success. `increase(neptide_events_total{kind=~"failed|rolled_back"}[1h]) > 0` reports individual failures right away. The endpoint has no authentication and reveals container names, so keep it on an internal network.
 
+### Maintenance windows
+
+`neptide.window` (or `--window` for every target) names when updates may be applied: entries of `DAYS HH:MM-HH:MM` separated by `;`, where DAYS is `daily`, a day (`Mon`), a range (`Mon-Fri`) or a list (`Sat,Sun`). A range may end past midnight (`Fri 22:00-02:00` belongs to Friday). Times follow the container's `TZ`, e.g. `TZ=Europe/Berlin`.
+
+Outside the window, updates are reported as available, with a note, and applied in the first cycle inside it. So pick an `--interval` shorter than the window: with `--interval 30m` and `Sun 03:00-04:00`, updates land on Sunday between 03:00 and 03:30. That is also how to schedule updates for a fixed time. An empty `neptide.window=""` label lifts a default window for one container.
+
 ### Private registries
 
 neptide reads credentials from a Docker `config.json` (`--docker-config`, default `$DOCKER_CONFIG/config.json` or `~/.docker/config.json`): a `credHelpers` entry for the registry first, then `credsStore`, as Docker picks them. One deliberate difference: when the helper is missing, fails or knows nothing about the registry, neptide still tries the inline `auths`, where Docker would not. So a config copied from a desktop (`credsStore: desktop`) can carry inline tokens for neptide.
