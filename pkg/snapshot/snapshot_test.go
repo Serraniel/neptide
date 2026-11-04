@@ -22,8 +22,12 @@ func TestSelect(t *testing.T) {
 		{Type: "volume", Name: "cache", Destination: "/cache", RW: true},
 		{Type: "tmpfs", Destination: "/tmp", RW: true},
 	}}
-	s := &Snapshotter{}
-	copyM, skipped := s.Select(ct, []string{"/cache"}, map[string]string{"shared": "app-cron"})
+	// Default: volumes only.
+	if copyM, skipped := (&Snapshotter{}).Select(ct, []string{"/cache"}, map[string]string{"volume:shared": "app-cron"}); len(copyM) != 1 || copyM[0].Destination != "/data" || !strings.Contains(strings.Join(skipped, "\n"), "/config.yml: bind mount; set neptide.snapshot.binds=true") {
+		t.Errorf("default selection: copy=%v skipped=%v", copyM, skipped)
+	}
+	s := &Snapshotter{Binds: true}
+	copyM, skipped := s.Select(ct, []string{"/cache"}, map[string]string{"volume:shared": "app-cron"})
 	var dests []string
 	for _, m := range copyM {
 		dests = append(dests, m.Destination)
@@ -39,11 +43,27 @@ func TestSelect(t *testing.T) {
 	}
 }
 
+func TestUsedBy(t *testing.T) {
+	inUse := map[string]string{"volume:db": "app-cron", "bind:/srv/app": "backup"}
+	for m, want := range map[engine.Mount]string{
+		{Type: "volume", Name: "db"}:            "app-cron",
+		{Type: "volume", Name: "other"}:         "",
+		{Type: "bind", Source: "/srv/app"}:      "backup",
+		{Type: "bind", Source: "/srv/app/data"}: "backup", // child of a used path
+		{Type: "bind", Source: "/srv"}:          "backup", // parent of a used path
+		{Type: "bind", Source: "/srv/apple"}:    "",
+	} {
+		if got := usedBy(inUse, m); got != want {
+			t.Errorf("usedBy(%+v) = %q, want %q", m, got, want)
+		}
+	}
+}
+
 func TestSystemPaths(t *testing.T) {
 	for p, want := range map[string]bool{
 		"/": true, "/etc": true, "/etc/ssl": true, "/proc/1": true, "/var/lib/docker": true,
-		"/var/lib": true, // contains the docker root
-		"/srv/app": false, "/home/me/data": false, "/var/lib/dockerish": false, "/opt/app": false,
+		"/var/lib": true, "/tmp": true, "/tmp/x": true, "/var/log/app": true, "/home": true, "/srv": true, "/mnt": true,
+		"/srv/app": false, "/home/me/data": false, "/var/lib/dockerish": false, "/opt/app": false, "/mnt/nas/photos": false,
 	} {
 		if got := isSystemPath(p, "/var/lib/docker"); got != want {
 			t.Errorf("isSystemPath(%q) = %v, want %v", p, got, want)

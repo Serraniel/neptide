@@ -39,7 +39,16 @@ const HelperImage = "debian:13-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e
 const (
 	exitFile    = 10 // the source was a single file
 	exitNoSpace = 42
+	exitNested  = 43 // other mounts below the source
+	exitSpecial = 44 // a socket, fifo or device
+	exitLinked  = 45 // the bind source is a symlink elsewhere
 )
+
+var skipCodes = map[int]string{
+	exitNested:  "contains other mounts, which a restore could detach",
+	exitSpecial: "is not a regular file or directory",
+	exitLinked:  "resolves to another path (symlink) or into a system directory",
+}
 
 // Engine is what snapshots need from Docker.
 type Engine interface {
@@ -53,6 +62,7 @@ type Engine interface {
 	RemoveVolume(ctx context.Context, name string) error
 	Containers(ctx context.Context, labels ...string) ([]engine.ContainerSummary, error)
 	Inspect(ctx context.Context, id string) (*engine.Container, error)
+	InspectVolume(ctx context.Context, name string) (*engine.Volume, error)
 }
 
 // Snapshotter takes and restores snapshots.
@@ -62,6 +72,10 @@ type Snapshotter struct {
 	Keep int
 	// DockerRoot is never snapshotted (default /var/lib/docker).
 	DockerRoot string
+	// Binds also snapshots bind mounts (per container: neptide.snapshot.binds).
+	// Off by default: host paths may be shared with host processes, contain
+	// other mounts or be symlinks, which a restore must never wipe.
+	Binds bool
 	// Now is the clock (tests).
 	Now func() time.Time
 }
@@ -94,8 +108,11 @@ func (s *Snapshotter) Prepare(ctx context.Context) error {
 	return nil
 }
 
-// systemPaths are never snapshotted or restored, whatever a container mounts.
-var systemPaths = []string{"/", "/bin", "/boot", "/dev", "/etc", "/lib", "/lib64", "/proc", "/root", "/run", "/sbin", "/sys", "/usr", "/var/run"}
+// systemTrees are never snapshotted, nor anything below them.
+var systemTrees = []string{"/bin", "/boot", "/dev", "/etc", "/lib", "/lib64", "/proc", "/root", "/run", "/sbin", "/sys", "/usr", "/var/run", "/tmp", "/var/tmp", "/var/log", "/var/cache", "/var/spool"}
+
+// sharedRoots are never snapshotted themselves (their subdirectories may be app data).
+var sharedRoots = []string{"/", "/home", "/mnt", "/media", "/srv", "/opt", "/var", "/var/lib"}
 
 // Select decides which mounts of ct are snapshotted. inUse holds sources
 // (volume names and host paths) that other running containers mount.
@@ -113,10 +130,12 @@ func (s *Snapshotter) Select(ct *engine.Container, exclude []string, inUse map[s
 			skipped = append(skipped, m.Destination+": excluded")
 		case !m.RW:
 			skipped = append(skipped, m.Destination+": read-only, not data this container changes")
+		case m.Type == "bind" && !s.Binds:
+			skipped = append(skipped, m.Destination+": bind mount; set neptide.snapshot.binds=true to include bind mounts")
 		case m.Type == "bind" && isSystemPath(src, root):
 			skipped = append(skipped, m.Destination+": system path "+src+", never snapshotted")
-		case inUse[src] != "":
-			skipped = append(skipped, m.Destination+": also used by running container "+inUse[src]+", restoring it would pull data from under it")
+		case usedBy(inUse, m) != "":
+			skipped = append(skipped, m.Destination+": also used by running container "+usedBy(inUse, m)+", restoring it would pull data from under it")
 		default:
 			copyMounts = append(copyMounts, m)
 		}
@@ -126,16 +145,37 @@ func (s *Snapshotter) Select(ct *engine.Container, exclude []string, inUse map[s
 
 func isSystemPath(p, dockerRoot string) bool {
 	p = path.Clean(p)
-	if p == "/var/run/docker.sock" || p == "/run/docker.sock" {
+	if slices.Contains(sharedRoots, p) {
 		return true
 	}
-	for _, sp := range systemPaths {
-		if p == sp || (sp != "/" && strings.HasPrefix(p, sp+"/")) {
+	for _, sp := range systemTrees {
+		if p == sp || strings.HasPrefix(p, sp+"/") {
 			return true
 		}
 	}
 	dockerRoot = path.Clean(dockerRoot)
 	return p == dockerRoot || strings.HasPrefix(p, dockerRoot+"/") || strings.HasPrefix(dockerRoot, p+"/")
+}
+
+// usedBy names another container using the same data: the same volume, or
+// for binds the same path, a parent or a child of it.
+func usedBy(inUse map[string]string, m engine.Mount) string {
+	src := source(m)
+	if m.Type != "bind" {
+		return inUse["volume:"+src]
+	}
+	src = path.Clean(src)
+	for other, who := range inUse {
+		o, ok := strings.CutPrefix(other, "bind:")
+		if !ok {
+			continue
+		}
+		o = path.Clean(o)
+		if o == src || strings.HasPrefix(o, src+"/") || strings.HasPrefix(src, o+"/") {
+			return who
+		}
+	}
+	return ""
 }
 
 // inUse maps the sources other running containers mount to their name.
@@ -151,10 +191,11 @@ func (s *Snapshotter) inUse(ctx context.Context, self string) (map[string]string
 		}
 		ct, err := s.Engine.Inspect(ctx, c.ID)
 		if err != nil {
-			continue
+			// Unknown means unsafe: do not guess that the data is unused.
+			return nil, fmt.Errorf("inspect %s: %w", c.ID, err)
 		}
 		for _, m := range ct.Mounts {
-			out[source(m)] = strings.TrimPrefix(ct.Name, "/")
+			out[m.Type+":"+source(m)] = strings.TrimPrefix(ct.Name, "/")
 		}
 	}
 	return out, nil
@@ -175,8 +216,24 @@ func (s *Snapshotter) Take(ctx context.Context, ct *engine.Container, exclude []
 		return nil, fmt.Errorf("checking which data other containers use: %w", err)
 	}
 	mounts, skipped := s.Select(ct, exclude, inUse)
+	// Volumes with a non-local driver or driver options (bind or NFS
+	// "volumes") are host paths in disguise: treat them like binds.
+	var plain []engine.Mount
+	for _, m := range mounts {
+		if m.Type == "volume" {
+			v, err := s.Engine.InspectVolume(ctx, m.Name)
+			if err != nil {
+				return nil, fmt.Errorf("inspect volume %s: %w", m.Name, err)
+			}
+			if v.Driver != "local" || len(v.Options) > 0 {
+				skipped = append(skipped, m.Destination+": volume "+m.Name+" is backed by a host path or remote storage")
+				continue
+			}
+		}
+		plain = append(plain, m)
+	}
 	snap := &Snapshot{Container: name, Skipped: skipped}
-	for i, m := range mounts {
+	for i, m := range plain {
 		vol := fmt.Sprintf("neptide-snap-%s-%s-%d", unsafe.ReplaceAllString(name, "_"), ts, i)
 		labels := map[string]string{LabelOf: name, LabelMount: m.Destination, LabelTime: ts}
 		if err := s.Engine.CreateVolume(ctx, vol, labels); err != nil {
@@ -185,11 +242,28 @@ func (s *Snapshotter) Take(ctx context.Context, ct *engine.Container, exclude []
 		}
 		item := Item{Mount: m, Volume: vol}
 		snap.Items = append(snap.Items, item)
-		// Refuse when the copy would leave less than 10 % of the space free.
-		script := `need=$(du -sk /src | cut -f1); free=$(df -Pk /dst | awk 'NR==2{print $4}')
-if [ "$need" -ge "$((free * 9 / 10))" ]; then echo "need ${need}K, ${free}K free" >&2; exit 42; fi
+		// Checks first, then the copy. Refuse when the copy would leave less
+		// than 10 % of the disk free; skip special files, sources containing
+		// other mounts, and bind sources that are symlinks elsewhere (the
+		// mount root must be a suffix of the declared source path).
+		script := `src_root=$(awk '$5=="/src"{print $4}' /proc/self/mountinfo | tail -1)
+if [ "$TYPE" = bind ]; then
+  [ "${SOURCE##*/}" = "${src_root##*/}" ] || exit 45
+  real=$(printf '%s' "$src_root" | sed -E 's#^/@[^/]*##')
+  case "$real" in /etc|/etc/*|/usr|/usr/*|/proc|/proc/*|/sys|/sys/*|/boot|/boot/*|/dev|/dev/*|/bin|/bin/*|/sbin|/sbin/*|/lib|/lib/*|/lib64|/lib64/*|/root|/root/*|/run|/run/*|/tmp|/tmp/*|/var/log|/var/log/*|/var/lib/docker|/var/lib/docker/*) exit 45 ;; esac
+fi
+if awk '$5 ~ "^/src/"' /proc/self/mountinfo | grep -q .; then exit 43; fi
+if [ ! -d /src ] && [ ! -f /src ]; then exit 44; fi
+need=$(du -sk /src | cut -f1); set -- $(df -Pk /dst | awk 'NR==2{print $2, $4}')
+if [ "$need" -ge "$(($2 - $1 / 10))" ]; then echo "need ${need}K, ${2}K available" >&2; exit 42; fi
 if [ -d /src ]; then cp -a --sparse=always /src/. /dst/; else cp -a --sparse=always /src /dst/file && exit 10; fi`
 		code, err := s.run(ctx, m, vol, true, script)
+		if reason, skip := skipCodes[code]; skip && err == nil {
+			_ = s.Engine.RemoveVolume(context.WithoutCancel(ctx), vol)
+			snap.Items = snap.Items[:len(snap.Items)-1]
+			snap.Skipped = append(snap.Skipped, m.Destination+": "+reason)
+			continue
+		}
 		switch {
 		case err != nil:
 			s.discard(ctx, snap)
@@ -216,7 +290,7 @@ func (s *Snapshotter) Restore(ctx context.Context, snap *Snapshot) error {
 	for _, it := range snap.Items {
 		// Directories: empty without crossing into other file systems, then copy.
 		// Single files: overwrite in place, keeping the bind-mounted inode.
-		script := "find /dst -xdev -mindepth 1 -maxdepth 1 -exec rm -rf --one-file-system -- {} + && cp -a --sparse=always /src/. /dst/"
+		script := "find /dst -xdev -mindepth 1 -maxdepth 1 ! -exec mountpoint -q {} \\; -exec rm -rf --one-file-system -- {} + && cp -a --sparse=always /src/. /dst/"
 		if it.File {
 			script = "cp --preserve=all --sparse=always /src/file /dst"
 		}
@@ -247,10 +321,11 @@ func (s *Snapshotter) run(ctx context.Context, data engine.Mount, vol string, ta
 	if take {
 		dataTarget, volTarget = "/src", "/dst"
 	}
+	// Recursive (Docker's default): nested mounts stay mounted inside the
+	// helper, so the checks see them and find -xdev / rm --one-file-system
+	// never descend into them (a non-recursive bind would turn them into
+	// plain directories that rm could detach on the host).
 	dataMount := map[string]any{"Type": data.Type, "Source": source(data), "Target": dataTarget, "ReadOnly": take}
-	if data.Type == "bind" {
-		dataMount["BindOptions"] = map[string]any{"NonRecursive": true}
-	}
 	mounts := []map[string]any{
 		dataMount,
 		{"Type": "volume", "Source": vol, "Target": volTarget, "ReadOnly": !take},
@@ -258,6 +333,7 @@ func (s *Snapshotter) run(ctx context.Context, data engine.Mount, vol string, ta
 	id, err := s.Engine.Create(ctx, "", map[string]any{
 		"Image":  HelperImage,
 		"Cmd":    []string{"sh", "-c", script},
+		"Env":    []string{"TYPE=" + data.Type, "SOURCE=" + source(data)},
 		"Labels": map[string]string{"neptide.helper": "snapshot"},
 	}, map[string]any{"Mounts": mounts, "NetworkMode": "none"}, nil)
 	if err != nil {

@@ -242,7 +242,8 @@ func (u *Updater) container(ctx context.Context, id, name string, labels map[str
 	// Recreate by tag, as compose would; the pull resolves the same digest.
 	rec := rollout.Recreate{Auth: u.auth(next.Host), Gate: gate, OldConfig: u.oldConfig(ref)}
 	if pol.Snapshot {
-		rec.Snapshots = &snapshot.Snapshotter{Engine: u.Engine, Keep: u.Opts.SnapshotKeep, DockerRoot: u.dockerRoot(ctx)}
+		rec.Snapshots = &snapshot.Snapshotter{Engine: u.Engine, Keep: u.Opts.SnapshotKeep, DockerRoot: u.dockerRoot(ctx),
+			Binds: labels[rollout.LabelSnapshotBinds] == "true"}
 		rec.Exclude = snapshot.Excludes(labels[rollout.LabelSnapshotExclude])
 		rec.Log = func(msg string) { u.Log.Warn(msg) }
 	}

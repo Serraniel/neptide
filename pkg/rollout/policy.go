@@ -23,6 +23,7 @@ const (
 	// them on rollback; LabelSnapshotExclude lists mount paths to skip.
 	LabelSnapshot        = "neptide.snapshot"
 	LabelSnapshotExclude = "neptide.snapshot.exclude"
+	LabelSnapshotBinds   = "neptide.snapshot.binds"
 )
 
 // Mode is what happens when an update is found.

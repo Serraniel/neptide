@@ -29,6 +29,7 @@ Swarm: see [stack.yaml](stack.yaml). It runs one service updater on a manager, p
 | `neptide.mode` | `update`, `notify` | `update`; `--monitor-only` wins |
 | `neptide.health-timeout` | duration, e.g. `3m` | `--health-timeout` (`2m`) |
 | `neptide.snapshot` | `true` / `false` | `--snapshot` (off): copy volumes and bind mounts before an update, restore them on rollback |
+| `neptide.snapshot.binds` | `true` / `false` | `false`: only named volumes are snapshotted |
 | `neptide.snapshot.exclude` | mount paths, e.g. `/media,/cache` | none |
 
 On Swarm, put labels under `deploy.labels`, the service labels. Images pinned to a digest (`image@sha256:…`) and locally built images are never touched.
@@ -50,12 +51,14 @@ Every flag can also be set as an environment variable, `NEPTIDE_<FLAG>`; for exa
 
 **With `neptide.snapshot=true`,** step 2 also copies the stopped container's writable volumes and bind mounts into snapshot volumes (`neptide-snap-*`, the last 3 kept). A rollback restores them before the old container starts, so it never runs on data the new version has already migrated. If the restore fails, the old container stays stopped instead of starting on that data.
 
-Snapshots never touch:
+By default only **named local volumes** are snapshotted. Bind mounts need `neptide.snapshot.binds=true` on the container. Never snapshotted, even then:
 - read-only mounts;
-- system paths (`/`, `/etc`, `/proc`, Docker's root, `docker.sock`);
+- system trees (`/etc`, `/usr`, `/proc`, `/tmp`, `/var/log`, Docker's root, …) and shared roots such as `/`, `/home`, `/srv` themselves;
+- bind sources that are symlinks elsewhere or contain other mounts (a restore must never detach an NFS share);
+- volumes backed by host paths or remote storage;
 - data another running container mounts.
 
-Skipped mounts are logged. A snapshot that would leave less than 10 % free space is refused, and the update with it. Copies keep ownership, xattrs, ACLs, hardlinks and sparse files.
+Skipped mounts are logged. A snapshot that would leave less than 10 % of the disk free is refused, and the update with it. Copies keep ownership, xattrs, ACLs, hardlinks and sparse files.
 
 **Service:**
 1. Change the image to `name:tag@digest`, with `update_config` defaulted as described above.

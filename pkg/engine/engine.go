@@ -377,8 +377,16 @@ func (c *Client) Wait(ctx context.Context, id string) (int, error) {
 
 // Volume is a named volume.
 type Volume struct {
-	Name   string            `json:"Name"`
-	Labels map[string]string `json:"Labels"`
+	Name    string            `json:"Name"`
+	Driver  string            `json:"Driver"`
+	Labels  map[string]string `json:"Labels"`
+	Options map[string]string `json:"Options"`
+}
+
+// InspectVolume reads one volume.
+func (c *Client) InspectVolume(ctx context.Context, name string) (*Volume, error) {
+	var v Volume
+	return &v, c.json(ctx, http.MethodGet, "/volumes/"+url.PathEscape(name), nil, nil, &v)
 }
 
 // CreateVolume creates a local volume with labels.
