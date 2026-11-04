@@ -1,0 +1,144 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Publishes signed binaries and images for a release tag.
+name: Release
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to (re)build, e.g. v0.2.0
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  TAG: ${{ inputs.tag }}
+  GO_VERSION: "1.27.3"
+
+jobs:
+  binaries:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag }}
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Build
+        run: |
+          set -euo pipefail
+          commit="$(git rev-parse HEAD)"
+          mkdir dist
+          for target in linux/amd64 linux/arm64 linux/arm/v7; do
+            IFS=/ read -r os arch arm <<<"$target"
+            out="dist/neptide_${TAG#v}_${os}_${arch}${arm}"
+            CGO_ENABLED=0 GOOS=$os GOARCH=$arch GOARM=${arm#v} go build -trimpath -buildvcs=false \
+              -ldflags "-buildid= -s -w -X main.buildVersion=${TAG} -X main.commit=${commit}" \
+              -o "$out" ./cmd/neptide
+          done
+          # Source SBOMs (Go modules) in both common formats.
+          go run github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@latest app -json -licenses \
+            -output "dist/neptide_${TAG#v}.cdx.json" -main cmd/neptide
+      - uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          path: .
+          format: spdx-json
+          output-file: dist/neptide_source.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Version the SPDX file and add it to the checksums
+        run: |
+          mv dist/neptide_source.spdx.json "dist/neptide_${TAG#v}.spdx.json"
+          (cd dist && sha256sum neptide_* > SHA256SUMS)
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - run: cosign sign-blob --yes --bundle dist/SHA256SUMS.sigstore.json dist/SHA256SUMS
+      - run: gh release upload "$TAG" dist/* --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - name: Lowercase image name
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag }}
+      - id: src
+        run: |
+          commit=$(git rev-parse HEAD)
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "short=${commit::7}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # Pre-1.0 there is no bare major tag: a 0.x minor may break things.
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: latest=false
+          tags: |
+            type=semver,pattern={{version}},value=${{ inputs.tag }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ inputs.tag }}
+            type=semver,pattern={{major}},value=${{ inputs.tag }},enable=${{ !startsWith(inputs.tag, 'v0.') }}
+            type=raw,value=latest,enable=${{ !contains(inputs.tag, '-') }}
+            type=raw,value=sha-${{ steps.src.outputs.short }}
+          labels: |
+            org.opencontainers.image.title=neptide
+            org.opencontainers.image.licenses=AGPL-3.0-or-later
+      - id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            VERSION=${{ inputs.tag }}
+            COMMIT=${{ steps.src.outputs.commit }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: mode=max
+          sbom: true
+      # BuildKit already attached an SPDX SBOM and SLSA provenance to the image.
+      # A CycloneDX SBOM is added as a signed attestation and a release asset.
+      - uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+          format: cyclonedx-json
+          output-file: image.cdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Sign image and attest SBOM
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          cosign sign --yes "${IMAGE}@${DIGEST}"
+          cosign attest --yes --type cyclonedx --predicate image.cdx.json "${IMAGE}@${DIGEST}"
+      - name: Attach image SBOM to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          name="${GITHUB_REPOSITORY#*/}"
+          cp image.cdx.json "${name}_${TAG#v}_image.cdx.json"
+          gh release upload "$TAG" "${name}_${TAG#v}_image.cdx.json" --clobber -R "$GITHUB_REPOSITORY"

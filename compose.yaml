@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Standalone hosts (Compose or plain docker run):
+#   DOCKER_GID=$(getent group docker | cut -d: -f3) docker compose up -d
+#
+# Opt a container in with the label neptide.enable=true.
+
+services:
+  neptide:
+    image: ghcr.io/serraniel/neptide:latest   # or :edge
+    restart: unless-stopped
+    read_only: true
+    user: "65532:${DOCKER_GID:?set DOCKER_GID to the host docker group id}"
+    environment:
+      NEPTIDE_INTERVAL: 6h
+      NEPTIDE_TRACK: digest            # default for containers without neptide.track
+      NEPTIDE_MONITOR_ONLY: "false"
+      NEPTIDE_NOTIFY: ${NEPTIDE_NOTIFY:-}  # e.g. discord://token@id, ntfy://ntfy.sh/topic
+      NEPTIDE_SERVICES: "false"        # not a swarm; see stack.yaml for swarms
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Registry credentials for private images (read-only):
+      # - ${HOME}/.docker/config.json:/config/config.json:ro
+    # environment: NEPTIDE_DOCKER_CONFIG_FILE: /config/config.json
+    labels:
+      neptide.self: "true"

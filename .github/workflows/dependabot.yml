@@ -1,0 +1,75 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Gives Dependabot PRs the Conventional Commit type release-please acts on
+# (squash merge uses the PR title as the commit message):
+#
+#   security(deps): …   the update fixes a published advisory → "Security", patch release
+#   deps: …             production dependency or base image → "Dependencies", patch release
+#   chore(deps-dev): …  development only → hidden, no release
+#   ci: …               GitHub Actions → hidden, no release
+#
+# Whether an update is a security fix is decided against the GitHub Advisory
+# Database: some advisory affects the old version and none affects the new one.
+name: Dependabot
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  classify:
+    # pull_request_target runs with a write token, so the PR's code is never checked out here.
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - id: meta
+        uses: dependabot/fetch-metadata@21025c705c08248db411dc16f3619e6b5f9ea21a # v2.5.0
+      - name: Classify and retitle
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          TITLE: ${{ github.event.pull_request.title }}
+          DEPS: ${{ steps.meta.outputs.updated-dependencies-json }}
+        run: |
+          set -euo pipefail
+          advisories=()
+          while read -r dep; do
+            name=$(jq -r .dependencyName <<<"$dep")
+            prev=$(jq -r '.prevVersion // empty' <<<"$dep")
+            new=$(jq -r '.newVersion // empty' <<<"$dep")
+            case $(jq -r .packageEcosystem <<<"$dep") in
+              go_modules) eco=go ;; npm_and_yarn) eco=npm ;; github_actions) eco=actions ;; pip) eco=pip ;;
+              *) continue ;;   # docker: no advisory database; base image updates are plain deps
+            esac
+            [ -n "$prev" ] && [ -n "$new" ] || continue
+            q() { gh api -X GET /advisories -f ecosystem="$eco" -f affects="$name@$1" -f per_page=100 --jq '.[].ghsa_id' | sort -u; }
+            fixed=$(comm -23 <(q "${prev#v}") <(q "${new#v}"))
+            for id in $fixed; do advisories+=("$id"); done
+          done < <(jq -c '.[]' <<<"$DEPS")
+
+          dev=$(jq -r 'all(.[]; .dependencyType == "direct:development" or .dependencyType == "indirect:development")' <<<"$DEPS")
+          eco=$(jq -r '.[0].packageEcosystem' <<<"$DEPS")
+          subject=$(sed -E 's/^[a-z]+(\([^)]*\))?!?: //' <<<"$TITLE")
+          if [ ${#advisories[@]} -gt 0 ]; then
+            ids=$(printf '%s\n' "${advisories[@]}" | sort -u | paste -sd, - | sed 's/,/, /g')
+            title="security(deps): $subject"
+            case $subject in *"($ids)"*) ;; *) title="$title ($ids)" ;; esac
+            gh label create security --color B60205 -R "$REPO" 2>/dev/null || true
+            gh pr edit "$PR" -R "$REPO" --add-label security
+          elif [ "$eco" = github_actions ]; then
+            title="ci: $subject"
+          elif [ "$dev" = true ]; then
+            title="chore(deps-dev): $subject"
+          else
+            title="deps: $subject"
+          fi
+          if [ "$title" != "$TITLE" ]; then
+            gh pr edit "$PR" -R "$REPO" --title "$title"
+          fi
+          echo "$title" >> "$GITHUB_STEP_SUMMARY"

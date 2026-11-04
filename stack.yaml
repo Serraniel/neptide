@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Docker Swarm:
+#   DOCKER_GID=$(getent group docker | cut -d: -f3) docker stack deploy -c stack.yaml neptide
+#
+# Opt a service in with deploy.labels: neptide.enable=true. Swarm performs the
+# rolling update; neptide sets update_config (one task at a time, rollback on
+# failure) for services that have none.
+
+services:
+  # Exactly one instance updates services, on a manager.
+  services:
+    image: ghcr.io/serraniel/neptide:latest
+    user: "65532:${DOCKER_GID:?set DOCKER_GID}"
+    environment:
+      NEPTIDE_CONTAINERS: "false"
+      NEPTIDE_NOTIFY: ${NEPTIDE_NOTIFY:-}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
+      # neptide may update itself; swarm replaces the task like any other.
+      labels:
+        neptide.enable: "true"
+
+  # Optional: one instance per node for standalone (non-swarm) containers.
+  containers:
+    image: ghcr.io/serraniel/neptide:latest
+    user: "65532:${DOCKER_GID:?set DOCKER_GID}"
+    environment:
+      NEPTIDE_SERVICES: "false"
+      NEPTIDE_NOTIFY: ${NEPTIDE_NOTIFY:-}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    deploy:
+      mode: global
+      labels:
+        neptide.enable: "true"

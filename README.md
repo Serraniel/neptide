@@ -1,0 +1,62 @@
+# neptide
+
+Keeps Docker containers and **Swarm services** on their newest image, and rolls them back when the new image is unhealthy.
+
+It works standalone as a replacement for Watchtower or Shepherd, and it is the update engine of [NepFleet](https://github.com/Serraniel/nepfleet).
+
+- **Health-gated.** A container is replaced only once its successor passes its `HEALTHCHECK`, or keeps running for a while if it has none. Otherwise the old container is restored, with the same name and config.
+- **Swarm-native.** Services are updated through Swarm's own rolling update, pinned to the new digest. Services without an `update_config` get a safe one: one task at a time, roll back on failure.
+- **Tracks, not surprises.** Each image follows its tag's digest (`digest`, the default) or moves within `patch`, `minor` or `major`. Releases outside the track are reported, never applied.
+- **Notifications** go to Discord, Slack, Telegram, Matrix, ntfy, Gotify, e-mail and webhooks, through [shoutrrr](https://github.com/nicholas-fedor/shoutrrr) URLs.
+- **Small and unprivileged.** A static binary on `scratch`, running as uid 65532 and talking to the Docker API directly.
+
+## Run
+
+Standalone host: see [compose.yaml](compose.yaml).
+
+```sh
+DOCKER_GID=$(getent group docker | cut -d: -f3) docker compose up -d
+```
+
+Swarm: see [stack.yaml](stack.yaml). It runs one service updater on a manager, plus an optional global updater for standalone containers.
+
+## Opt in with labels
+
+| Label | Values | Default |
+|---|---|---|
+| `neptide.enable` | `true` / `false` | off; `--all` turns it on for everything |
+| `neptide.track` | `digest`, `patch`, `minor`, `major` | `--track` (`digest`) |
+| `neptide.mode` | `update`, `notify` | `update`; `--monitor-only` wins |
+| `neptide.health-timeout` | duration, e.g. `3m` | `--health-timeout` (`2m`) |
+
+On Swarm, put labels under `deploy.labels`, the service labels. Images pinned to a digest (`image@sha256:…`) and locally built images are never touched.
+
+## Options
+
+Every flag can also be set as an environment variable, `NEPTIDE_<FLAG>`; for example `--monitor-only` becomes `NEPTIDE_MONITOR_ONLY=true`.
+
+`--interval 6h` · `--once` · `--monitor-only` · `--all` · `--track` · `--health-timeout` · `--stable 15s` · `--swarm-timeout 15m` · `--containers` / `--services` · `--notify <urls>` · `--notify-on available,beyond_track,updated,rolled_back,failed` · `--docker-config` · `--insecure-registries` · `--log-json`
+
+## How an update runs
+
+**Container:**
+1. Pull the new image.
+2. Rename the old container to `<name>-neptide-old` and stop it.
+3. Create the new container with the same config. Settings that were only the old image's defaults (CMD, ENV, healthcheck and so on) are dropped, so the new image's defaults apply.
+4. Start it and wait for the health gate.
+5. On success, remove the old container. On failure, remove the new one, then rename and start the old one.
+
+**Service:**
+1. Change the image to `name:tag@digest`, with `update_config` defaulted as described above.
+2. Wait for Swarm to report `completed` or `rollback_completed`.
+
+## Develop
+
+```sh
+go test ./...
+CGO_ENABLED=0 go build -o /tmp/neptide ./cmd/neptide
+test/integration/compose.sh /tmp/neptide   # uses your Docker daemon
+test/integration/swarm.sh /tmp/neptide     # isolated in docker:dind
+```
+
+Releases, SBOMs and signatures follow [NepFleet's process](https://github.com/Serraniel/nepfleet/blob/main/docs/releases.md). License: [AGPL-3.0-or-later](LICENSE).

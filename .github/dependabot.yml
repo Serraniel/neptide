@@ -1,0 +1,21 @@
+# Commit types are set by .github/workflows/dependabot.yml (security / deps / ci).
+# Docker base images are pinned by digest, so a rebuilt base image under the
+# same tag still produces a PR, and with it a release on the newest base.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule: { interval: weekly }
+    commit-message: { prefix: deps }
+    groups:
+      go: { patterns: ["*"], update-types: [minor, patch] }
+  - package-ecosystem: docker
+    directory: /
+    schedule: { interval: daily }
+    commit-message: { prefix: deps }
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+    commit-message: { prefix: ci }
+    groups:
+      actions: { patterns: ["*"] }
