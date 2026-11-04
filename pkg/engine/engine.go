@@ -183,6 +183,11 @@ type ContainerSummary struct {
 	Image  string            `json:"Image"`
 	State  string            `json:"State"`
 	Labels map[string]string `json:"Labels"`
+	// HostConfig.NetworkMode is "container:<id>" for a container that
+	// shares another one's network namespace.
+	HostConfig struct {
+		NetworkMode string `json:"NetworkMode"`
+	} `json:"HostConfig"`
 }
 
 // Containers lists running containers carrying all given labels (k or k=v).
@@ -205,6 +210,7 @@ type Container struct {
 	} `json:"NetworkSettings"`
 	State struct {
 		Status     string `json:"Status"`
+		StartedAt  string `json:"StartedAt"`
 		Running    bool   `json:"Running"`
 		Restarting bool   `json:"Restarting"`
 		ExitCode   int    `json:"ExitCode"`

@@ -60,6 +60,8 @@ By default only **named local volumes** are snapshotted. Bind mounts need `nepti
 
 Skipped mounts are logged. A snapshot that would leave less than 10 % of the disk free is refused, and the update with it. Copies keep ownership, xattrs, ACLs, hardlinks and sparse files.
 
+**Containers sharing its network** (`network_mode: container:X` or `service:X`, as behind a VPN container) lose their network when X restarts, and cannot start at all once X is replaced. After X is updated or rolled back, neptide restarts them or recreates them unchanged in the new X's namespace, then waits for their health gate. They do not need `neptide.enable`, and their image is not updated by this.
+
 **Service:**
 1. Change the image to `name:tag@digest`, with `update_config` defaulted as described above.
 2. Wait for Swarm to report `completed` or `rollback_completed`.

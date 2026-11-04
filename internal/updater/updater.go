@@ -113,12 +113,23 @@ func (u *Updater) Run(ctx context.Context) ([]Event, error) {
 			return nil, fmt.Errorf("list containers: %w", err)
 		}
 	}
+	var deps map[string][]string
+	if len(containers) > 0 {
+		// Every running container, enabled or not, may share the network
+		// namespace of one we update.
+		all, err := u.Engine.Containers(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("list containers: %w", err)
+		}
+		deps = dependents(all)
+	}
 	for _, c := range containers {
 		if c.Labels["com.docker.swarm.service.id"] != "" || c.Labels[rollout.LabelSelf] == "true" {
 			continue // swarm tasks are updated through their service; never replace ourselves mid-run
 		}
 		name := strings.TrimPrefix(firstOr(c.Names, c.ID), "/")
-		u.container(ctx, c.ID, name, c.Labels, emit)
+		// By name: an earlier update in this cycle may have replaced it.
+		u.container(ctx, name, c.Labels, deps, emit)
 	}
 
 	if u.Opts.SkipServices {
@@ -180,7 +191,44 @@ func (u *Updater) plan(ctx context.Context, current registry.Ref, runningDigest 
 	return target.WithDigest(digest), beyond, nil
 }
 
-func (u *Updater) container(ctx context.Context, id, name string, labels map[string]string, emit func(Event)) {
+// dependents maps a container ID to the names of the running containers
+// that share its network namespace.
+func dependents(all []engine.ContainerSummary) map[string][]string {
+	out := map[string][]string{}
+	for _, c := range all {
+		if parent := rollout.SharesNetworkWith(c.HostConfig.NetworkMode); parent != "" {
+			out[parent] = append(out[parent], strings.TrimPrefix(firstOr(c.Names, c.ID), "/"))
+		}
+	}
+	return out
+}
+
+// reattach follows up on an update attempt of before: if the container
+// running under its name now is a different one, or was restarted, the
+// containers sharing its network namespace are moved into the new one.
+func (u *Updater) reattach(ctx context.Context, before *engine.Container, names []string, emit func(Event)) {
+	if len(names) == 0 {
+		return
+	}
+	name := strings.TrimPrefix(before.Name, "/")
+	after, err := u.Engine.Inspect(ctx, name)
+	if err == nil && after.ID == before.ID && after.State.StartedAt == before.State.StartedAt && after.State.Running {
+		return // never stopped: the namespace is the same
+	}
+	for _, dep := range names {
+		if err != nil || !after.State.Running {
+			emit(Event{Kind: Failed, Target: dep, Err: fmt.Errorf("it shares the network of %s, which is not running after its update; start %s, then restart %s", name, name, dep)})
+			continue
+		}
+		if rerr := rollout.Reattach(ctx, u.Engine, dep, after.ID, u.Opts.Gate); rerr != nil {
+			emit(Event{Kind: Failed, Target: dep, Err: rerr})
+			continue
+		}
+		u.Log.Info("re-attached " + dep + " to the network of " + name)
+	}
+}
+
+func (u *Updater) container(ctx context.Context, name string, labels map[string]string, deps map[string][]string, emit func(Event)) {
 	fail := func(err error) { emit(Event{Kind: Failed, Target: name, Err: err}) }
 	pol, err := u.policy(labels)
 	if err != nil {
@@ -190,11 +238,12 @@ func (u *Updater) container(ctx context.Context, id, name string, labels map[str
 	if !pol.Enabled {
 		return
 	}
-	ct, err := u.Engine.Inspect(ctx, id)
+	ct, err := u.Engine.Inspect(ctx, name)
 	if err != nil {
 		fail(err)
 		return
 	}
+	id := ct.ID
 	ref, err := registry.ParseRef(ct.ConfigImage())
 	if err != nil || ref.Digest != "" {
 		return // built locally, or pinned to a digest on purpose
@@ -248,6 +297,7 @@ func (u *Updater) container(ctx context.Context, id, name string, labels map[str
 		rec.Log = func(msg string) { u.Log.Warn(msg) }
 	}
 	err = rollout.RecreateContainer(ctx, u.Engine, id, next.WithDigest("").String(), rec)
+	defer u.reattach(ctx, ct, deps[id], emit)
 	switch {
 	case errors.Is(err, rollout.ErrRolledBack):
 		emit(Event{Kind: RolledBack, Target: name, From: from, To: to, Err: err})
