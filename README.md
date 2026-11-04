@@ -38,7 +38,18 @@ On Swarm, put labels under `deploy.labels`, the service labels. Images pinned to
 
 Every flag can also be set as an environment variable, `NEPTIDE_<FLAG>`; for example `--monitor-only` becomes `NEPTIDE_MONITOR_ONLY=true`.
 
-`--interval 6h` · `--once` · `--monitor-only` · `--all` · `--track` · `--health-timeout` · `--stable 15s` · `--swarm-timeout 15m` · `--containers` / `--services` · `--notify <urls>` · `--notify-on available,beyond_track,updated,rolled_back,failed` · `--docker-config` · `--insecure-registries` · `--log-json`
+`--interval 6h` · `--once` · `--monitor-only` · `--all` · `--track` · `--health-timeout` · `--stable 15s` · `--swarm-timeout 15m` · `--containers` / `--services` · `--notify <urls>` · `--notify-on available,beyond_track,updated,rolled_back,failed` · `--docker-config` · `--insecure-registries` · `--metrics-listen` · `--log-json`
+
+### Metrics
+
+`--metrics-listen :9090` serves Prometheus metrics at `/metrics` (and `/healthz`); it is off by default. Metric names start with `neptide_`:
+- `events_total{kind}` counts events by kind;
+- `cycles_total{result}` counts finished cycles (`ok` or `error`);
+- `last_cycle_timestamp_seconds`, `last_success_timestamp_seconds` and `last_cycle_duration_seconds` describe the most recent cycle;
+- `updates_pending`, plus `update_pending{kind,name}` per container or service, show updates found but not applied;
+- `build_info{version}` is always 1.
+
+Alert on `time() - neptide_last_success_timestamp_seconds > 2 * <interval>` to notice a stuck or failing updater. The endpoint has no authentication and reveals container names, so keep it on an internal network.
 
 ### Private registries
 
