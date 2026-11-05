@@ -152,7 +152,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	}
 
 	u := &updater.Updater{
-		Engine: eng, Registry: reg, Log: log, Notify: notifier.Event,
+		Engine: eng, Registry: reg, Log: log,
 		Opts: updater.Options{
 			All:            *all,
 			SkipContainers: !*containers,
@@ -165,6 +165,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 		},
 	}
 
+	if notifier != nil {
+		u.Notify = notifier.Event
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	m := metrics.New(buildVersion)
@@ -189,12 +192,13 @@ func run(args []string, stdout, stderr io.Writer) error {
 	for {
 		start := time.Now()
 		events, err := u.Run(ctx)
+		// Also when stopping: updates done before the signal must be reported.
+		notifier.Flush()
 		if err != nil && !errors.Is(err, context.Canceled) {
 			log.Error("cycle failed", "err", err)
 		}
 		if !errors.Is(err, context.Canceled) {
 			m.Cycle(start, events, err)
-			notifier.Flush()
 		}
 		if *once {
 			return nil

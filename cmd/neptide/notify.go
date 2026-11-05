@@ -5,6 +5,7 @@ package main
 import (
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -25,7 +26,7 @@ type sender interface {
 // them (Discord embeds, Slack, Teams, ntfy, Telegram …) show them as such.
 // In digest mode it collects a cycle's events and sends one message.
 type notifier struct {
-	send    sender
+	targets []target
 	want    map[string]bool
 	digest  bool
 	host    string
@@ -33,19 +34,29 @@ type notifier struct {
 	pending []updater.Event
 }
 
+// target is one notification URL. ownTitle: the URL sets a title or
+// subject itself, which neptide's title must not override.
+type target struct {
+	send     sender
+	ownTitle bool
+}
+
 func newNotifier(urls, kinds []string, digest bool, log *slog.Logger) (*notifier, error) {
 	if len(urls) == 0 {
 		return nil, nil
-	}
-	s, err := shoutrrr.CreateSenderWithOptions(types.SenderOptions{Timeout: 20 * time.Second}, urls...)
-	if err != nil {
-		return nil, fmt.Errorf("notification URL: %w", err)
 	}
 	host, _ := os.Hostname()
 	if h := os.Getenv("NEPTIDE_HOST_NAME"); h != "" {
 		host = h
 	}
-	n := &notifier{send: s, want: map[string]bool{}, digest: digest, host: host, log: log}
+	n := &notifier{want: map[string]bool{}, digest: digest, host: host, log: log}
+	for _, raw := range urls {
+		s, err := shoutrrr.CreateSenderWithOptions(types.SenderOptions{Timeout: 20 * time.Second}, raw)
+		if err != nil {
+			return nil, fmt.Errorf("notification URL: %w", err)
+		}
+		n.targets = append(n.targets, target{s, hasOwnTitle(raw)})
+	}
 	for _, k := range kinds {
 		n.want[k] = true
 	}
@@ -93,7 +104,7 @@ func (n *notifier) Flush() {
 		sort.Strings(lines)
 		body = append(body, lines...)
 	}
-	n.deliver(n.title(strings.Join(parts, ", ")), strings.Join(body, "\n"), worst)
+	n.deliver(n.title(strings.Join(parts, ", ")), capLines(body, maxDigest), worst)
 }
 
 func (n *notifier) title(s string) string {
@@ -104,13 +115,32 @@ func (n *notifier) title(s string) string {
 }
 
 func (n *notifier) deliver(title, message, lvl string) {
-	params := types.Params{types.TitleKey: title, types.LevelKey: lvl}
-	for _, err := range n.send.Send(message, &params) {
-		if err != nil {
-			n.log.Warn("notification failed", "err", err)
+	for _, t := range n.targets {
+		params := types.Params{types.TitleKey: title, types.LevelKey: lvl}
+		if t.ownTitle {
+			delete(params, types.TitleKey)
+			message = title + "\n" + message // the summary must not get lost
+		}
+		for _, err := range t.send.Send(message, &params) {
+			if err != nil {
+				n.log.Warn("notification failed", "err", err)
+			}
 		}
 	}
 }
+
+func hasOwnTitle(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	q := u.Query()
+	return q.Has("title") || q.Has("subject")
+}
+
+// maxDigest keeps a digest below the smallest service limit (Telegram:
+// 4096 characters including the title).
+const maxDigest = 3500
 
 var digestOrder = []updater.EventKind{updater.Failed, updater.RolledBack, updater.Updated, updater.Available, updater.Deferred, updater.Beyond}
 
@@ -142,4 +172,20 @@ func headline(e updater.Event) string {
 		return e.Target + ": new release outside its track"
 	}
 	return e.Target
+}
+
+// capLines joins lines up to limit characters and says how many were left out.
+func capLines(lines []string, limit int) string {
+	var b strings.Builder
+	for i, l := range lines {
+		if b.Len()+len(l)+1 > limit-40 {
+			fmt.Fprintf(&b, "… and %d more", len(lines)-i)
+			break
+		}
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(l)
+	}
+	return b.String()
 }

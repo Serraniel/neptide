@@ -24,7 +24,7 @@ func (f *fakeSender) Send(message string, p *types.Params) []error {
 
 func TestNotifier(t *testing.T) {
 	f := &fakeSender{}
-	n := &notifier{send: f, want: map[string]bool{"updated": true, "failed": true}, host: "nas", log: slog.Default()}
+	n := &notifier{targets: []target{{send: f}}, want: map[string]bool{"updated": true, "failed": true, "rolled_back": true, "beyond_track": true}, host: "nas", log: slog.Default()}
 	n.Event(updater.Event{Kind: updater.Updated, Target: "web", From: "a:1", To: "a:2"})
 	n.Event(updater.Event{Kind: updater.Available, Target: "db"}) // not wanted
 	if len(f.got) != 1 || f.got[0].title != "neptide@nas: updated web" || f.got[0].level != "info" {
@@ -49,7 +49,36 @@ func TestNotifier(t *testing.T) {
 		t.Errorf("digest = %+v", d)
 	}
 
+	f.got = nil
+	n.digest = false
+	n.Event(updater.Event{Kind: updater.Beyond, Target: "db", To: "17"})
+	if f.got[0].level != "warning" {
+		t.Errorf("beyond track: %+v", f.got[0])
+	}
+
+	// A URL with its own title keeps it; neptide's goes into the message.
+	own := &fakeSender{}
+	n.targets = []target{{send: own, ownTitle: true}}
+	n.Event(updater.Event{Kind: updater.RolledBack, Target: "web"})
+	if own.got[0].title != "" || !strings.HasPrefix(own.got[0].message, "neptide@nas: rolled back web\n") || own.got[0].level != "error" {
+		t.Errorf("own title: %+v", own.got[0])
+	}
+	if !hasOwnTitle("ntfy://ntfy.sh/topic?title=Mine") || !hasOwnTitle("smtp://u:p@h:25/?subject=x") || hasOwnTitle("discord://token@id") {
+		t.Error("hasOwnTitle")
+	}
+
 	var none *notifier // no URLs configured
 	none.Event(updater.Event{Kind: updater.Updated})
 	none.Flush()
+}
+
+func TestDigestIsCapped(t *testing.T) {
+	lines := make([]string, 200)
+	for i := range lines {
+		lines[i] = "• Updated container app" + strings.Repeat("x", 40)
+	}
+	out := capLines(lines, maxDigest)
+	if len(out) > maxDigest || !strings.HasSuffix(out, "more") {
+		t.Errorf("len %d, tail %q", len(out), out[len(out)-20:])
+	}
 }
