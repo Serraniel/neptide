@@ -22,9 +22,6 @@ import (
 	"time"
 	_ "time/tzdata" // the image has no zoneinfo; windows follow TZ
 
-	"github.com/nicholas-fedor/shoutrrr"
-	"github.com/nicholas-fedor/shoutrrr/pkg/types"
-
 	"github.com/Serraniel/neptide/internal/metrics"
 	"github.com/Serraniel/neptide/internal/updater"
 	"github.com/Serraniel/neptide/pkg/engine"
@@ -95,6 +92,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	stable := fs.Duration("stable", envDuration("STABLE", 15*time.Second), "how long a container without HEALTHCHECK must keep running")
 	swarmTimeout := fs.Duration("swarm-timeout", envDuration("SWARM_TIMEOUT", 15*time.Minute), "upper bound for one swarm service update")
 	notify := fs.String("notify", env("NOTIFY", ""), "comma separated shoutrrr URLs (discord://, slack://, ntfy://, generic+https://, ...)")
+	notifyDigest := fs.Bool("notify-digest", envBool("NOTIFY_DIGEST", false), "send one notification per cycle that lists all its events, instead of one per event")
 	notifyOn := fs.String("notify-on", env("NOTIFY_ON", "available,beyond_track,updated,rolled_back,failed"), "event kinds to notify")
 	dockerConfig := fs.String("docker-config", env("DOCKER_CONFIG_FILE", defaultDockerConfig()), "Docker config.json with registry credentials")
 	insecure := fs.String("insecure-registries", env("INSECURE_REGISTRIES", ""), "comma separated registry hosts reached over plain HTTP")
@@ -148,13 +146,13 @@ func run(args []string, stdout, stderr io.Writer) error {
 	creds.Log = func(msg string) { log.Warn(msg) }
 	reg.Creds = creds.Lookup
 
-	notifier, err := newNotifier(split(*notify), split(*notifyOn), log)
+	notifier, err := newNotifier(split(*notify), split(*notifyOn), *notifyDigest, log)
 	if err != nil {
 		return err
 	}
 
 	u := &updater.Updater{
-		Engine: eng, Registry: reg, Log: log, Notify: notifier,
+		Engine: eng, Registry: reg, Log: log, Notify: notifier.Event,
 		Opts: updater.Options{
 			All:            *all,
 			SkipContainers: !*containers,
@@ -196,6 +194,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		}
 		if !errors.Is(err, context.Canceled) {
 			m.Cycle(start, events, err)
+			notifier.Flush()
 		}
 		if *once {
 			return nil
@@ -206,30 +205,6 @@ func run(args []string, stdout, stderr io.Writer) error {
 		case <-time.After(nextCycle(*interval, u.NextWindow())):
 		}
 	}
-}
-
-func newNotifier(urls, kinds []string, log *slog.Logger) (func(updater.Event), error) {
-	if len(urls) == 0 {
-		return nil, nil
-	}
-	sender, err := shoutrrr.CreateSenderWithOptions(types.SenderOptions{Timeout: 20 * time.Second}, urls...)
-	if err != nil {
-		return nil, fmt.Errorf("notification URL: %w", err)
-	}
-	want := map[string]bool{}
-	for _, k := range kinds {
-		want[k] = true
-	}
-	return func(e updater.Event) {
-		if !want[string(e.Kind)] {
-			return
-		}
-		for _, err := range sender.Send("neptide: "+e.String(), nil) {
-			if err != nil {
-				log.Warn("notification failed", "err", err)
-			}
-		}
-	}, nil
 }
 
 func defaultDockerConfig() string {
