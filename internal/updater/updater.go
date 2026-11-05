@@ -155,8 +155,8 @@ func (u *Updater) Run(ctx context.Context) ([]Event, error) {
 		deps = dependents(all)
 	}
 	for _, c := range containers {
-		if c.Labels["com.docker.swarm.service.id"] != "" || c.Labels[rollout.LabelSelf] == "true" {
-			continue // swarm tasks are updated through their service; never replace ourselves mid-run
+		if skip(c.Labels) {
+			continue
 		}
 		name := strings.TrimPrefix(firstOr(c.Names, c.ID), "/")
 		// By name: an earlier update in this cycle may have replaced it.
@@ -481,4 +481,13 @@ func firstOr(s []string, def string) string {
 		return s[0]
 	}
 	return def
+}
+
+// skip reports containers that are never updated directly: swarm tasks
+// (updated through their service), neptide itself (it cannot replace itself
+// mid-run) and one-off `docker compose run` containers, which carry their
+// service's labels but are short-lived commands, not the service.
+func skip(labels map[string]string) bool {
+	return labels["com.docker.swarm.service.id"] != "" || labels[rollout.LabelSelf] == "true" ||
+		labels["com.docker.compose.oneoff"] == "True"
 }
