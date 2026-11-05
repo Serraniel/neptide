@@ -258,6 +258,12 @@ func (u *Updater) reattach(ctx context.Context, before *engine.Container, deps m
 func (u *Updater) follow(ctx context.Context, parent, oldID string, after *engine.Container, parentOK bool, deps map[string][]engine.ContainerSummary, emit func(Event)) {
 	for _, d := range deps[oldID] {
 		dep := strings.TrimPrefix(firstOr(d.Names, d.ID), "/")
+		if d.Labels["com.docker.compose.oneoff"] == "True" {
+			// A docker compose run command: stopping it would kill the
+			// command, and with --rm the container is gone afterwards.
+			emit(Event{Kind: Failed, Target: dep, Err: fmt.Errorf("this docker compose run container shares the network of %s, which was restarted; run the command again", parent)})
+			continue
+		}
 		if d.Labels[rollout.LabelSelf] == "true" {
 			// Re-attaching means stopping it: neptide would kill itself.
 			emit(Event{Kind: Failed, Target: dep, Err: fmt.Errorf("neptide shares the network of %s, which was restarted; restart neptide (docker restart %s) to get its network back", parent, dep)})
@@ -302,6 +308,12 @@ func (u *Updater) container(ctx context.Context, name string, labels map[string]
 		return
 	}
 	id := ct.ID
+	if autoRemove(ct) {
+		// docker run --rm: the daemon deletes the old container as soon as
+		// it stops, so there is nothing to roll back to.
+		fail(errors.New("started with --rm (AutoRemove), so an update could not be rolled back; not updated"))
+		return
+	}
 	ref, err := registry.ParseRef(ct.ConfigImage())
 	if err != nil || ref.Digest != "" {
 		return // built locally, or pinned to a digest on purpose
@@ -490,4 +502,10 @@ func firstOr(s []string, def string) string {
 func skip(labels map[string]string) bool {
 	return labels["com.docker.swarm.service.id"] != "" || labels[rollout.LabelSelf] == "true" ||
 		labels["com.docker.compose.oneoff"] == "True"
+}
+
+// autoRemove reports a container created with --rm.
+func autoRemove(ct *engine.Container) bool {
+	v, _ := ct.HostConfig["AutoRemove"].(bool)
+	return v
 }
