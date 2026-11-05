@@ -20,6 +20,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	_ "time/tzdata" // the image has no zoneinfo; windows follow TZ
 
 	"github.com/nicholas-fedor/shoutrrr"
 	"github.com/nicholas-fedor/shoutrrr/pkg/types"
@@ -85,6 +86,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	monitor := fs.Bool("monitor-only", envBool("MONITOR_ONLY", false), "report updates, never apply them (overrides neptide.mode)")
 	containers := fs.Bool("containers", envBool("CONTAINERS", true), "update standalone and compose containers on this node")
 	services := fs.Bool("services", envBool("SERVICES", true), "update swarm services (only acts on a manager; run one such instance per swarm)")
+	windowSpec := fs.String("window", env("WINDOW", ""), "default maintenance window for applying updates, e.g. \"Sat,Sun 03:00-05:00\" (local time, TZ); per container: neptide.window")
 	snap := fs.Bool("snapshot", envBool("SNAPSHOT", false), "snapshot volumes before every container update and restore them on rollback (per container: neptide.snapshot)")
 	snapKeep := fs.Int("snapshot-keep", envInt("SNAPSHOT_KEEP", 3), "data snapshots kept per container")
 	all := fs.Bool("all", envBool("ALL", false), "include containers without neptide.enable=true")
@@ -111,6 +113,19 @@ func run(args []string, stdout, stderr io.Writer) error {
 	tr, err := version.ParseTrack(*track)
 	if err != nil {
 		return err
+	}
+	window, err := rollout.ParseWindows(*windowSpec)
+	if err != nil {
+		return fmt.Errorf("--window: %w", err)
+	}
+	// Go silently falls back to UTC for an unknown TZ, so windows would
+	// open at the wrong hour: an error with --window, a warning otherwise
+	// (labels may still set windows).
+	if err := checkTZ(os.Getenv("TZ")); err != nil {
+		if len(window) > 0 {
+			return err
+		}
+		log.Warn(err.Error() + "; maintenance windows in labels would use UTC")
 	}
 	mode := rollout.ModeUpdate
 	if *monitor {
@@ -145,7 +160,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 			SkipContainers: !*containers,
 			SkipServices:   !*services,
 			ForceNotify:    *monitor, // wins over neptide.mode=update labels
-			Defaults:       rollout.Policy{Track: tr, Mode: mode, HealthTimeout: *healthTimeout, Snapshot: *snap},
+			Defaults:       rollout.Policy{Track: tr, Mode: mode, HealthTimeout: *healthTimeout, Snapshot: *snap, Window: window},
 			SnapshotKeep:   *snapKeep,
 			Gate:           rollout.Gate{Timeout: *healthTimeout, Stable: *stable},
 			SwarmTimeout:   *swarmTimeout,
@@ -171,7 +186,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		defer func() { _ = srv.Close() }()
 		log.Info("metrics on " + ln.Addr().String() + "/metrics")
 	}
-	log.Info("neptide started", "version", buildVersion, "interval", interval.String(), "monitor_only", *monitor)
+	log.Info("neptide started", "version", buildVersion, "interval", interval.String(), "monitor_only", *monitor,
+		"time_zone", time.Now().Format("MST -0700"))
 	for {
 		start := time.Now()
 		events, err := u.Run(ctx)
@@ -187,7 +203,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-time.After(*interval):
+		case <-time.After(nextCycle(*interval, u.NextWindow())):
 		}
 	}
 }
@@ -234,4 +250,41 @@ func split(s string) []string {
 		}
 	}
 	return out
+}
+
+// nextCycle waits the interval, or less if a deferred update's maintenance
+// window opens sooner: a window shorter than the interval is never missed,
+// and updates start right when their window opens.
+func nextCycle(interval time.Duration, window time.Time) time.Duration {
+	if window.IsZero() {
+		return interval
+	}
+	if d := time.Until(window) + time.Second; d < interval {
+		return max(d, time.Second)
+	}
+	return interval
+}
+
+// checkTZ reports a TZ value Go cannot load: a zone name, or a path to a
+// zoneinfo file (with or without the leading ":"). POSIX rules such as
+// CET-1CEST,M3.5.0,M10.5.0/3 are not supported by Go and fall back to UTC.
+func checkTZ(tz string) error {
+	tz = strings.TrimPrefix(tz, ":")
+	if tz == "" {
+		return nil
+	}
+	if strings.HasPrefix(tz, "/") {
+		raw, err := os.ReadFile(tz) //nolint:gosec // the operator's own TZ setting
+		if err == nil {
+			_, err = time.LoadLocationFromTZData(tz, raw)
+		}
+		if err != nil {
+			return fmt.Errorf("TZ=%q: %w", tz, err)
+		}
+		return nil
+	}
+	if _, err := time.LoadLocation(tz); err != nil {
+		return fmt.Errorf("TZ=%q is not a known time zone (use a name like Europe/Berlin): %w", tz, err)
+	}
+	return nil
 }

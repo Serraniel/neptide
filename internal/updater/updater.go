@@ -25,6 +25,7 @@ type EventKind string
 // Event kinds.
 const (
 	Available  EventKind = "available"    // update found, mode notify
+	Deferred   EventKind = "deferred"     // update found, waits for its maintenance window
 	Beyond     EventKind = "beyond_track" // newer release outside the track
 	Updated    EventKind = "updated"
 	RolledBack EventKind = "rolled_back"
@@ -39,6 +40,8 @@ type Event struct {
 	From   string
 	To     string
 	Err    error
+	// Window is the maintenance window a Deferred update waits for.
+	Window string
 }
 
 func (e Event) String() string {
@@ -49,6 +52,8 @@ func (e Event) String() string {
 	switch e.Kind {
 	case Available:
 		return fmt.Sprintf("Update available for %s %s: %s → %s", what, e.Target, e.From, e.To)
+	case Deferred:
+		return fmt.Sprintf("Update for %s %s waits for its maintenance window (%s): %s → %s", what, e.Target, e.Window, e.From, e.To)
 	case Beyond:
 		return fmt.Sprintf("%s %s: %s is available, outside its update track (now %s)", what, e.Target, e.To, e.From)
 	case Updated:
@@ -85,10 +90,36 @@ type Updater struct {
 	Notify   func(Event)
 	Log      *slog.Logger
 	Opts     Options
+	// Now is the clock for maintenance windows (time.Now when nil).
+	Now func() time.Time
+
+	wake time.Time
+}
+
+// deferUntil remembers when the window of a deferred update opens next.
+func (u *Updater) deferUntil(w rollout.Windows) {
+	next := w.Next(u.now())
+	if !next.IsZero() && (u.wake.IsZero() || next.Before(u.wake)) {
+		u.wake = next
+	}
+}
+
+// NextWindow is when the earliest window of an update deferred in the last
+// cycle opens (zero if none was deferred). The caller should run the next
+// cycle then if that is sooner than its interval, so a window shorter than
+// the interval is not missed.
+func (u *Updater) NextWindow() time.Time { return u.wake }
+
+func (u *Updater) now() time.Time {
+	if u.Now != nil {
+		return u.Now()
+	}
+	return time.Now()
 }
 
 // Run performs one cycle and returns the events it produced.
 func (u *Updater) Run(ctx context.Context) ([]Event, error) {
+	u.wake = time.Time{}
 	var events []Event
 	emit := func(e Event) {
 		events = append(events, e)
@@ -313,6 +344,11 @@ func (u *Updater) container(ctx context.Context, name string, labels map[string]
 		emit(Event{Kind: Available, Target: name, From: from, To: to})
 		return
 	}
+	if !pol.Window.Open(u.now()) {
+		u.deferUntil(pol.Window)
+		emit(Event{Kind: Deferred, Target: name, From: from, To: to, Window: pol.Window.String()})
+		return
+	}
 	gate := u.Opts.Gate
 	gate.Timeout = pol.HealthTimeout
 	// Recreate by tag, as compose would; the pull resolves the same digest.
@@ -370,6 +406,11 @@ func (u *Updater) service(ctx context.Context, svc *engine.Service, emit func(Ev
 	}
 	if pol.Mode == rollout.ModeNotify {
 		emit(Event{Kind: Available, Target: name, Swarm: true, From: from, To: to})
+		return
+	}
+	if !pol.Window.Open(u.now()) {
+		u.deferUntil(pol.Window)
+		emit(Event{Kind: Deferred, Target: name, Swarm: true, From: from, To: to, Window: pol.Window.String()})
 		return
 	}
 	err = rollout.UpdateService(ctx, u.Engine, svc.ID, next.String(), u.auth(next.Host), u.Opts.SwarmTimeout)

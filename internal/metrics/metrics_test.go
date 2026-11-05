@@ -36,7 +36,7 @@ func TestMetrics(t *testing.T) {
 		`neptide_last_cycle_timestamp_seconds 1800003600`,
 		`neptide_last_success_timestamp_seconds 1800000000`,
 		`neptide_updates_pending 1`,
-		`neptide_update_pending{kind="container",name="web"} 1`,
+		`neptide_update_pending{kind="container",name="web",reason="available"} 1`,
 	} {
 		if !strings.Contains(body, want+"\n") {
 			t.Errorf("missing %q in\n%s", want, body)

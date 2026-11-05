@@ -28,6 +28,7 @@ Swarm: see [stack.yaml](stack.yaml). It runs one service updater on a manager, p
 | `neptide.track` | `digest`, `patch`, `minor`, `major` | `--track` (`digest`) |
 | `neptide.mode` | `update`, `notify` | `update`; `--monitor-only` wins |
 | `neptide.health-timeout` | duration, e.g. `3m` | `--health-timeout` (`2m`) |
+| `neptide.window` | e.g. `Sat,Sun 03:00-05:00`, `daily 02:00-04:00; Wed 12:00-13:00` | `--window` (any time): apply updates only then, report them as available otherwise |
 | `neptide.snapshot` | `true` / `false` | `--snapshot` (off): copy volumes and bind mounts before an update, restore them on rollback |
 | `neptide.snapshot.binds` | `true` / `false` | `false`: only named volumes are snapshotted |
 | `neptide.snapshot.exclude` | mount paths, e.g. `/media,/cache` | none |
@@ -38,7 +39,7 @@ On Swarm, put labels under `deploy.labels`, the service labels. Images pinned to
 
 Every flag can also be set as an environment variable, `NEPTIDE_<FLAG>`; for example `--monitor-only` becomes `NEPTIDE_MONITOR_ONLY=true`.
 
-`--interval 6h` · `--once` · `--monitor-only` · `--all` · `--track` · `--health-timeout` · `--stable 15s` · `--swarm-timeout 15m` · `--containers` / `--services` · `--notify <urls>` · `--notify-on available,beyond_track,updated,rolled_back,failed` · `--docker-config` · `--insecure-registries` · `--metrics-listen` · `--log-json`
+`--interval 6h` · `--window` · `--once` · `--monitor-only` · `--all` · `--track` · `--health-timeout` · `--stable 15s` · `--swarm-timeout 15m` · `--containers` / `--services` · `--notify <urls>` · `--notify-on available,beyond_track,updated,rolled_back,failed` · `--docker-config` · `--insecure-registries` · `--metrics-listen` · `--log-json`
 
 ### Metrics
 
@@ -46,10 +47,18 @@ Every flag can also be set as an environment variable, `NEPTIDE_<FLAG>`; for exa
 - `events_total{kind}` counts events by kind;
 - `cycles_total{result}` counts finished cycles (`ok` or `error`);
 - `last_cycle_timestamp_seconds`, `last_success_timestamp_seconds` and `last_cycle_duration_seconds` describe the most recent cycle;
-- `updates_pending`, plus `update_pending{kind,name}` per container or service, show updates found but not applied;
+- `updates_pending`, plus `update_pending{kind,name,reason}` per container or service, show updates found but not applied (`reason` is `available` in notify mode, `deferred` while waiting for a maintenance window);
 - `build_info{version}` is always 1.
 
 A cycle counts as a success only if every target was checked and handled; a failed or rolled-back target makes it `partial`. To notice a stuck or failing updater, alert on `time() - neptide_last_success_timestamp_seconds > 2 * <interval> + <longest cycle>` with a `for:` of a few minutes; a cycle with health gates or swarm updates can take a while, and the value is 0 until the first success. `increase(neptide_events_total{kind=~"failed|rolled_back"}[1h]) > 0` reports individual failures right away. The endpoint has no authentication and reveals container names, so keep it on an internal network.
+
+### Maintenance windows
+
+`neptide.window` (or `--window` for every target) names when updates may be applied: entries of `DAYS HH:MM-HH:MM` separated by `;`, where DAYS is `daily`, a day (`Mon`), a range (`Mon-Fri`) or a list (`Sat,Sun`). A range may end past midnight (`Fri 22:00-02:00` belongs to Friday). Times follow the container's `TZ`, e.g. `TZ=Europe/Berlin`.
+
+Outside the window, an update is reported as a `deferred` event (not notified by default; add it to `--notify-on` if you want to hear about it) and applied when the window opens: neptide shortens its next sleep to wake up right then, so a window shorter than `--interval` is never missed, and `Sun 03:00-04:00` updates start at Sunday 03:00. An empty `neptide.window=""` label lifts a default window for one container.
+
+`TZ` must be a zone name such as `Europe/Berlin`; neptide refuses to start with an unknown one instead of silently using UTC, and logs the zone it uses. Windows follow the wall clock, so on daylight-saving days a window between 02:00 and 03:00 is skipped (spring) or open twice as long (autumn); avoid that hour. Containers sharing the network of an updated container (`network_mode: container:X`) are restarted with it, whatever their own window says, because they would lose their network otherwise.
 
 ### Private registries
 
