@@ -26,12 +26,12 @@ type Metrics struct {
 	lastStart time.Time
 	lastDur   time.Duration
 	lastOK    time.Time
-	pending   map[string]bool // targets with an update available (notify)
+	pending   map[string]string // target → available | deferred
 }
 
 // New returns empty metrics for this build.
 func New(version string) *Metrics {
-	return &Metrics{version: version, events: map[updater.EventKind]uint64{}, cycles: map[string]uint64{}, pending: map[string]bool{}}
+	return &Metrics{version: version, events: map[updater.EventKind]uint64{}, cycles: map[string]uint64{}, pending: map[string]string{}}
 }
 
 // Cycle records one finished cycle.
@@ -55,11 +55,11 @@ func (m *Metrics) Cycle(start time.Time, events []updater.Event, err error) {
 		m.lastOK = start
 	}
 	m.cycles[result]++
-	pending := map[string]bool{}
+	pending := map[string]string{}
 	for _, e := range events {
 		m.events[e.Kind]++
 		if e.Kind == updater.Available || e.Kind == updater.Deferred {
-			pending[target(e)] = true
+			pending[target(e)] = string(e.Kind)
 		}
 	}
 	m.pending = pending
@@ -101,9 +101,9 @@ func (m *Metrics) WriteTo(w io.Writer) (int64, error) {
 	metric("neptide_last_cycle_duration_seconds", "gauge", "Duration of the last cycle.")
 	fmt.Fprintf(&b, "neptide_last_cycle_duration_seconds %.3f\n", m.lastDur.Seconds())
 
-	metric("neptide_updates_pending", "gauge", "Targets with an update available that was not applied (notify mode), as of the last cycle.")
+	metric("neptide_updates_pending", "gauge", "Targets with an update found but not applied (notify mode or waiting for a maintenance window), as of the last cycle.")
 	fmt.Fprintf(&b, "neptide_updates_pending %d\n", len(m.pending))
-	metric("neptide_update_pending", "gauge", "1 for each target with an update available, as of the last cycle.")
+	metric("neptide_update_pending", "gauge", "1 for each target with an update not applied yet; reason is available (notify mode) or deferred (maintenance window).")
 	names := make([]string, 0, len(m.pending))
 	for t := range m.pending {
 		names = append(names, t)
@@ -111,7 +111,7 @@ func (m *Metrics) WriteTo(w io.Writer) (int64, error) {
 	sort.Strings(names)
 	for _, t := range names {
 		kind, name, _ := strings.Cut(t, "/")
-		fmt.Fprintf(&b, "neptide_update_pending{kind=\"%s\",name=\"%s\"} 1\n", esc(kind), esc(name))
+		fmt.Fprintf(&b, "neptide_update_pending{kind=\"%s\",name=\"%s\",reason=\"%s\"} 1\n", esc(kind), esc(name), m.pending[t])
 	}
 	n, err := io.WriteString(w, b.String())
 	return int64(n), err

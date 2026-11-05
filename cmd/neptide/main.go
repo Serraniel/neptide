@@ -118,12 +118,14 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("--window: %w", err)
 	}
-	// Go silently falls back to UTC for an unknown TZ; windows would then
-	// open at the wrong hour.
-	if tz := strings.TrimPrefix(os.Getenv("TZ"), ":"); tz != "" {
-		if _, err := time.LoadLocation(tz); err != nil {
-			return fmt.Errorf("TZ=%q is not a known time zone (use a name like Europe/Berlin): %w", tz, err)
+	// Go silently falls back to UTC for an unknown TZ, so windows would
+	// open at the wrong hour: an error with --window, a warning otherwise
+	// (labels may still set windows).
+	if err := checkTZ(os.Getenv("TZ")); err != nil {
+		if len(window) > 0 {
+			return err
 		}
+		log.Warn(err.Error() + "; maintenance windows in labels would use UTC")
 	}
 	mode := rollout.ModeUpdate
 	if *monitor {
@@ -261,4 +263,28 @@ func nextCycle(interval time.Duration, window time.Time) time.Duration {
 		return max(d, time.Second)
 	}
 	return interval
+}
+
+// checkTZ reports a TZ value Go cannot load: a zone name, or a path to a
+// zoneinfo file (with or without the leading ":"). POSIX rules such as
+// CET-1CEST,M3.5.0,M10.5.0/3 are not supported by Go and fall back to UTC.
+func checkTZ(tz string) error {
+	tz = strings.TrimPrefix(tz, ":")
+	if tz == "" {
+		return nil
+	}
+	if strings.HasPrefix(tz, "/") {
+		raw, err := os.ReadFile(tz) //nolint:gosec // the operator's own TZ setting
+		if err == nil {
+			_, err = time.LoadLocationFromTZData(tz, raw)
+		}
+		if err != nil {
+			return fmt.Errorf("TZ=%q: %w", tz, err)
+		}
+		return nil
+	}
+	if _, err := time.LoadLocation(tz); err != nil {
+		return fmt.Errorf("TZ=%q is not a known time zone (use a name like Europe/Berlin): %w", tz, err)
+	}
+	return nil
 }

@@ -115,7 +115,7 @@ func (ws Windows) Open(t time.Time) bool {
 }
 
 // Next returns when a window is next open at or after t: t itself if one
-// is open now, the zero time if there are no windows.
+// is open now or there are no windows.
 func (ws Windows) Next(t time.Time) time.Time {
 	if len(ws) == 0 || ws.Open(t) {
 		return t
@@ -129,6 +129,14 @@ func (ws Windows) Next(t time.Time) time.Time {
 				continue
 			}
 			c := time.Date(d.Year(), d.Month(), d.Day(), w.start/60, w.start%60, 0, 0, t.Location())
+			// A start inside a DST gap (02:30 on spring-forward day) is
+			// normalised past it; the window may already be open earlier.
+			for g := c.Add(-time.Hour); g.Before(c); g = g.Add(time.Minute) {
+				if g.After(t) && ws.Open(g) {
+					c = g
+					break
+				}
+			}
 			if c.After(t) && (best.IsZero() || c.Before(best)) {
 				best = c
 			}

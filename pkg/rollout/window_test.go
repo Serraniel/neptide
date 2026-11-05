@@ -81,3 +81,16 @@ func TestEmptyWindowLabelLiftsDefault(t *testing.T) {
 		t.Error("invalid label must be an error")
 	}
 }
+
+func TestWindowsNextInDSTGap(t *testing.T) {
+	berlin, err := time.LoadLocation("Europe/Berlin")
+	if err != nil {
+		t.Skip(err)
+	}
+	ws, _ := ParseWindows("Sun 02:30-03:30")
+	sat := time.Date(2026, 3, 28, 12, 0, 0, 0, berlin) // spring forward on Sunday 29th
+	got := ws.Next(sat)
+	if !ws.Open(got) {
+		t.Errorf("next = %s, which is not open", got)
+	}
+}
