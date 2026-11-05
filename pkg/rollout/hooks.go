@@ -57,14 +57,29 @@ func hookCmd(v string) ([]string, error) {
 	switch {
 	case v == "":
 		return nil, nil
-	case strings.HasPrefix(v, "["):
+	case strings.HasPrefix(v, `["`):
+		// Exec form, as in a Dockerfile; anything else (also "[ -d /x ] &&
+		// …") is a shell command.
 		var argv []string
-		if err := json.Unmarshal([]byte(v), &argv); err != nil || len(argv) == 0 {
-			return nil, errors.New("want a JSON array of strings, e.g. [\"/backup\", \"--now\"]")
+		if err := json.Unmarshal([]byte(v), &argv); err != nil || len(argv) == 0 || argv[0] == "" {
+			return nil, errors.New(`want a JSON array of strings, e.g. ["/backup", "--now"]`)
 		}
 		return argv, nil
 	}
 	return []string{"sh", "-c", v}, nil
+}
+
+// killable wraps a shell hook so it is killed at the timeout where the
+// image has timeout(1): Docker cannot kill an exec, so a hung hook would
+// otherwise keep running after neptide gives up. The command is passed as
+// $0, so it needs no quoting.
+func killable(cmd []string, timeout time.Duration) []string {
+	if len(cmd) != 3 || cmd[0] != "sh" || cmd[1] != "-c" {
+		return cmd
+	}
+	secs := int(timeout.Seconds())
+	wrapper := fmt.Sprintf(`if command -v timeout >/dev/null 2>&1; then exec timeout -s KILL %d sh -c "$0"; fi; exec sh -c "$0"`, secs)
+	return []string{"sh", "-c", wrapper, cmd[2]}
 }
 
 func (h Hooks) run(ctx context.Context, e Engine, id string, cmd []string, name string) error {
@@ -77,7 +92,7 @@ func (h Hooks) run(ctx context.Context, e Engine, id string, cmd []string, name 
 	}
 	hctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	code, out, err := e.Exec(hctx, id, cmd)
+	code, out, err := e.Exec(hctx, id, killable(cmd, timeout))
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		return fmt.Errorf("%s hook did not finish within %s", name, timeout)

@@ -4,6 +4,7 @@ package rollout
 
 import (
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -23,7 +24,16 @@ func TestHooksFrom(t *testing.T) {
 	if h, _ := HooksFrom(nil); h.Pre != nil || h.Post != nil || h.Timeout != 5*time.Minute {
 		t.Errorf("no labels: %+v", h)
 	}
-	for _, bad := range []map[string]string{{LabelHookPost: `["unterminated`}, {LabelHookPre: `[]`}, {LabelHookTimeout: "soon"}} {
+	if h, err := HooksFrom(map[string]string{LabelHookPre: "[ -d /data ] && touch /data/x"}); err != nil || h.Pre[0] != "sh" {
+		t.Errorf("a shell test command is not JSON: %+v %v", h, err)
+	}
+	if got := killable([]string{"sh", "-c", "pg_dump > /x"}, 90*time.Second); len(got) != 4 || got[3] != "pg_dump > /x" || !strings.Contains(got[2], "timeout -s KILL 90") {
+		t.Errorf("killable = %q", got)
+	}
+	if got := killable([]string{"/backup"}, time.Minute); len(got) != 1 {
+		t.Errorf("exec form must not be wrapped: %q", got)
+	}
+	for _, bad := range []map[string]string{{LabelHookPost: `["unterminated`}, {LabelHookPre: `[""]`}, {LabelHookTimeout: "soon"}} {
 		if _, err := HooksFrom(bad); err == nil {
 			t.Errorf("%v must be rejected", bad)
 		}

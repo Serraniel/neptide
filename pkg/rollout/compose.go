@@ -130,10 +130,16 @@ func RecreateContainer(ctx context.Context, e Engine, id, newRef string, o Recre
 
 	// Before anything changes: a failing pre-update hook (a backup, say)
 	// cancels the update and leaves the old container running untouched.
-	if old.State.Running {
+	switch {
+	case len(o.Hooks.Pre) == 0:
+	case old.State.Running && !old.State.Restarting && !old.State.Paused:
 		if err := o.Hooks.run(ctx, e, old.ID, o.Hooks.Pre, "pre-update"); err != nil {
 			return err
 		}
+	case o.Log != nil:
+		// A crash-looping container cannot run it, and may be exactly
+		// what the new image fixes: update without the hook.
+		o.Log("pre-update hook of " + strings.TrimPrefix(old.Name, "/") + " skipped: the container is not running")
 	}
 	if err := e.Rename(ctx, old.ID, parked); err != nil {
 		return fmt.Errorf("park old container: %w", err)
