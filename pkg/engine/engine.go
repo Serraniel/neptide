@@ -501,3 +501,59 @@ func (c *Client) UpdateService(ctx context.Context, s *Service, auth *RegistryAu
 	_ = res.Body.Close()
 	return nil
 }
+
+// Exec runs cmd in a running container and returns its exit code and the
+// tail of its combined output.
+func (c *Client) Exec(ctx context.Context, id string, cmd []string) (int, string, error) {
+	var created struct {
+		ID string `json:"Id"`
+	}
+	if err := c.json(ctx, http.MethodPost, "/containers/"+url.PathEscape(id)+"/exec", nil,
+		map[string]any{"Cmd": cmd, "AttachStdout": true, "AttachStderr": true}, &created); err != nil {
+		return 0, "", err
+	}
+	res, err := c.do(ctx, http.MethodPost, "/exec/"+url.PathEscape(created.ID)+"/start", nil, map[string]any{"Detach": false, "Tty": false}, nil)
+	if err != nil {
+		return 0, "", err
+	}
+	out := demux(res.Body)
+	_ = res.Body.Close()
+	var info struct {
+		ExitCode int  `json:"ExitCode"`
+		Running  bool `json:"Running"`
+	}
+	if err := c.json(ctx, http.MethodGet, "/exec/"+url.PathEscape(created.ID)+"/json", nil, nil, &info); err != nil {
+		return 0, out, err
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, out, err
+	}
+	return info.ExitCode, out, nil
+}
+
+// demux reads a multiplexed stdout/stderr stream (8-byte frame headers) and
+// keeps the last 4 KiB of output.
+func demux(r io.Reader) string {
+	const keep = 4096
+	var buf []byte
+	hdr := make([]byte, 8)
+	for {
+		if _, err := io.ReadFull(r, hdr); err != nil {
+			break
+		}
+		n := int(hdr[4])<<24 | int(hdr[5])<<16 | int(hdr[6])<<8 | int(hdr[7])
+		chunk := make([]byte, n)
+		if _, err := io.ReadFull(r, chunk); err != nil {
+			buf = append(buf, chunk...)
+			break
+		}
+		buf = append(buf, chunk...)
+		if len(buf) > 2*keep {
+			buf = buf[len(buf)-keep:]
+		}
+	}
+	if len(buf) > keep {
+		buf = buf[len(buf)-keep:]
+	}
+	return string(bytes.TrimSpace(buf))
+}

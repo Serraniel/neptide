@@ -352,7 +352,12 @@ func (u *Updater) container(ctx context.Context, name string, labels map[string]
 	gate := u.Opts.Gate
 	gate.Timeout = pol.HealthTimeout
 	// Recreate by tag, as compose would; the pull resolves the same digest.
-	rec := rollout.Recreate{Auth: u.auth(next.Host), Gate: gate, OldConfig: u.oldConfig(ref)}
+	hooks, err := rollout.HooksFrom(labels)
+	if err != nil {
+		fail(err)
+		return
+	}
+	rec := rollout.Recreate{Auth: u.auth(next.Host), Gate: gate, OldConfig: u.oldConfig(ref), Hooks: hooks}
 	if pol.Snapshot {
 		rec.Snapshots = &snapshot.Snapshotter{Engine: u.Engine, Keep: u.Opts.SnapshotKeep, DockerRoot: u.dockerRoot(ctx),
 			Binds: labels[rollout.LabelSnapshotBinds] == "true"}

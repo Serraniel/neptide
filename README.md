@@ -29,6 +29,8 @@ Swarm: see [stack.yaml](stack.yaml). It runs one service updater on a manager, p
 | `neptide.mode` | `update`, `notify` | `update`; `--monitor-only` wins |
 | `neptide.health-timeout` | duration, e.g. `3m` | `--health-timeout` (`2m`) |
 | `neptide.window` | e.g. `Sat,Sun 03:00-05:00`, `daily 02:00-04:00; Wed 12:00-13:00` | `--window` (any time): apply updates only then, report them as available otherwise |
+| `neptide.hook.pre-update` / `neptide.hook.post-update` | a command, e.g. `pg_dump -U app app > /backup/app.sql` | none; see [Hooks](#hooks) |
+| `neptide.hook.timeout` | duration | `5m` per hook |
 | `neptide.snapshot` | `true` / `false` | `--snapshot` (off): copy volumes and bind mounts before an update, restore them on rollback |
 | `neptide.snapshot.binds` | `true` / `false` | `false`: only named volumes are snapshotted |
 | `neptide.snapshot.exclude` | mount paths, e.g. `/media,/cache` | none |
@@ -51,6 +53,12 @@ Every flag can also be set as an environment variable, `NEPTIDE_<FLAG>`; for exa
 - `build_info{version}` is always 1.
 
 A cycle counts as a success only if every target was checked and handled; a failed or rolled-back target makes it `partial`. To notice a stuck or failing updater, alert on `time() - neptide_last_success_timestamp_seconds > 2 * <interval> + <longest cycle>` with a `for:` of a few minutes; a cycle with health gates or swarm updates can take a while, and the value is 0 until the first success. `increase(neptide_events_total{kind=~"failed|rolled_back"}[1h]) > 0` reports individual failures right away. The endpoint has no authentication and reveals container names, so keep it on an internal network.
+
+### Hooks
+
+`neptide.hook.pre-update` runs inside the old container right before an update (after the new image is pulled, before anything is stopped), for example a database dump. If it fails or times out, the update is cancelled and the container keeps running untouched. `neptide.hook.post-update` runs inside the new container once it is healthy, for example a smoke test or a cache warm-up; if it fails, the update is rolled back like a failed health check.
+
+Hooks run with `sh -c`. Images without a shell take a JSON argv instead: `neptide.hook.pre-update=["/app/backup", "--now"]`. Each hook may take `neptide.hook.timeout` (default 5m), and its last output is reported when it fails. Hooks apply to containers; swarm services are updated by Swarm itself.
 
 ### Maintenance windows
 

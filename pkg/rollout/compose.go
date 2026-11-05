@@ -30,6 +30,7 @@ type Engine interface {
 	Remove(ctx context.Context, id string) error
 	InspectService(ctx context.Context, id string) (*engine.Service, error)
 	UpdateService(ctx context.Context, s *engine.Service, auth *engine.RegistryAuth) error
+	Exec(ctx context.Context, id string, cmd []string) (exitCode int, output string, err error)
 	snapshot.Engine
 }
 
@@ -75,6 +76,8 @@ type Recreate struct {
 	Exclude []string
 	// Log receives notes such as skipped mounts (may be nil).
 	Log func(msg string)
+	// Hooks run commands in the containers around the update.
+	Hooks Hooks
 }
 
 // RecreateContainer replaces container id with one running newRef, keeping
@@ -125,6 +128,13 @@ func RecreateContainer(ctx context.Context, e Engine, id, newRef string, o Recre
 		stopTimeout = time.Duration(s) * time.Second
 	}
 
+	// Before anything changes: a failing pre-update hook (a backup, say)
+	// cancels the update and leaves the old container running untouched.
+	if old.State.Running {
+		if err := o.Hooks.run(ctx, e, old.ID, o.Hooks.Pre, "pre-update"); err != nil {
+			return err
+		}
+	}
 	if err := e.Rename(ctx, old.ID, parked); err != nil {
 		return fmt.Errorf("park old container: %w", err)
 	}
@@ -196,6 +206,9 @@ func RecreateContainer(ctx context.Context, e Engine, id, newRef string, o Recre
 		return restore(fmt.Errorf("start: %w", err), newID)
 	}
 	if err := waitHealthy(ctx, e, newID, gate); err != nil {
+		return restore(err, newID)
+	}
+	if err := o.Hooks.run(ctx, e, newID, o.Hooks.Post, "post-update"); err != nil {
 		return restore(err, newID)
 	}
 	if err := e.Remove(ctx, old.ID); err != nil {
