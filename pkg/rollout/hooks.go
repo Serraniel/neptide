@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -25,6 +27,9 @@ const (
 	// LabelHookTimeout bounds each hook (default 5m).
 	LabelHookTimeout = "neptide.hook.timeout"
 )
+
+// jsonish matches values that were meant as the exec form.
+var jsonish = regexp.MustCompile(`^\[\s*("|\])`)
 
 // Hooks are the commands of one container.
 type Hooks struct {
@@ -57,14 +62,19 @@ func hookCmd(v string) ([]string, error) {
 	switch {
 	case v == "":
 		return nil, nil
-	case strings.HasPrefix(v, `["`):
-		// Exec form, as in a Dockerfile; anything else (also "[ -d /x ] &&
-		// …") is a shell command.
+	case strings.HasPrefix(v, "["):
+		// Exec form, as in a Dockerfile, when it parses as a JSON array of
+		// strings; a shell test like "[ -d /x ] && …" does not.
 		var argv []string
-		if err := json.Unmarshal([]byte(v), &argv); err != nil || len(argv) == 0 || argv[0] == "" {
-			return nil, errors.New(`want a JSON array of strings, e.g. ["/backup", "--now"]`)
+		if err := json.Unmarshal([]byte(v), &argv); err == nil {
+			if len(argv) == 0 || argv[0] == "" {
+				return nil, errors.New(`want a non-empty JSON array of strings, e.g. ["/backup", "--now"]`)
+			}
+			return argv, nil
 		}
-		return argv, nil
+		if jsonish.MatchString(v) {
+			return nil, errors.New(`looks like JSON but is not a JSON array of strings, e.g. ["/backup", "--now"]`)
+		}
 	}
 	return []string{"sh", "-c", v}, nil
 }
@@ -77,8 +87,9 @@ func killable(cmd []string, timeout time.Duration) []string {
 	if len(cmd) != 3 || cmd[0] != "sh" || cmd[1] != "-c" {
 		return cmd
 	}
-	secs := int(timeout.Seconds())
-	wrapper := fmt.Sprintf(`if command -v timeout >/dev/null 2>&1; then exec timeout -s KILL %d sh -c "$0"; fi; exec sh -c "$0"`, secs)
+	secs := max(int(math.Ceil(timeout.Seconds())), 1) // 0 would disable the kill
+	// Probe first: busybox before 1.30 only knows timeout -t SECS.
+	wrapper := fmt.Sprintf(`if timeout -s KILL 1 true >/dev/null 2>&1; then exec timeout -s KILL %d sh -c "$0"; fi; exec sh -c "$0"`, secs)
 	return []string{"sh", "-c", wrapper, cmd[2]}
 }
 

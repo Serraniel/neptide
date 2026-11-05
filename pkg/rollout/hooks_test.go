@@ -30,10 +30,16 @@ func TestHooksFrom(t *testing.T) {
 	if got := killable([]string{"sh", "-c", "pg_dump > /x"}, 90*time.Second); len(got) != 4 || got[3] != "pg_dump > /x" || !strings.Contains(got[2], "timeout -s KILL 90") {
 		t.Errorf("killable = %q", got)
 	}
+	if h, err := HooksFrom(map[string]string{LabelHookPre: `[ "/app/backup" ]`}); err != nil || !slices.Equal(h.Pre, []string{"/app/backup"}) {
+		t.Errorf("spaced exec form: %+v %v", h, err)
+	}
+	if got := killable([]string{"sh", "-c", "x"}, 500*time.Millisecond); !strings.Contains(got[2], "KILL 1 sh") {
+		t.Errorf("sub-second timeout must round up: %q", got[2])
+	}
 	if got := killable([]string{"/backup"}, time.Minute); len(got) != 1 {
 		t.Errorf("exec form must not be wrapped: %q", got)
 	}
-	for _, bad := range []map[string]string{{LabelHookPost: `["unterminated`}, {LabelHookPre: `[""]`}, {LabelHookTimeout: "soon"}} {
+	for _, bad := range []map[string]string{{LabelHookPost: `["unterminated`}, {LabelHookPre: `[""]`}, {LabelHookPre: `[]`}, {LabelHookPre: `[ "a", 1 ]`}, {LabelHookTimeout: "soon"}} {
 		if _, err := HooksFrom(bad); err == nil {
 			t.Errorf("%v must be rejected", bad)
 		}
