@@ -27,3 +27,20 @@ func TestDependents(t *testing.T) {
 		t.Errorf("dependents = %v", got)
 	}
 }
+
+func TestSkip(t *testing.T) {
+	for _, c := range []struct {
+		labels map[string]string
+		want   bool
+	}{
+		{map[string]string{"com.docker.compose.oneoff": "True", "neptide.enable": "true"}, true},
+		{map[string]string{"com.docker.compose.oneoff": "False", "neptide.enable": "true"}, false},
+		{map[string]string{"com.docker.swarm.service.id": "x"}, true},
+		{map[string]string{"neptide.self": "true"}, true},
+		{map[string]string{"neptide.enable": "true"}, false},
+	} {
+		if got := skip(c.labels); got != c.want {
+			t.Errorf("skip(%v) = %v", c.labels, got)
+		}
+	}
+}

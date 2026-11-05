@@ -33,6 +33,8 @@ Swarm: see [stack.yaml](stack.yaml). It runs one service updater on a manager, p
 | `neptide.snapshot.binds` | `true` / `false` | `false`: only named volumes are snapshotted |
 | `neptide.snapshot.exclude` | mount paths, e.g. `/media,/cache` | none |
 
+Never updated: swarm tasks (their service is), neptide itself, `docker compose run` containers (they carry their service's labels but are one-off commands) and containers started with `--rm`, because the daemon deletes the old container on stop and a failed update could not be rolled back.
+
 On Swarm, put labels under `deploy.labels`, the service labels. Images pinned to a digest (`image@sha256:…`) and locally built images are never touched.
 
 ## Options
