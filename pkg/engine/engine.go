@@ -219,6 +219,7 @@ type Container struct {
 		StartedAt  string `json:"StartedAt"`
 		Running    bool   `json:"Running"`
 		Restarting bool   `json:"Restarting"`
+		Paused     bool   `json:"Paused"`
 		ExitCode   int    `json:"ExitCode"`
 		Health     *struct {
 			Status string `json:"Status"`
@@ -500,4 +501,87 @@ func (c *Client) UpdateService(ctx context.Context, s *Service, auth *RegistryAu
 	}
 	_ = res.Body.Close()
 	return nil
+}
+
+// Exec runs cmd in a running container and returns its exit code and the
+// tail of its combined output.
+func (c *Client) Exec(ctx context.Context, id string, cmd []string) (int, string, error) {
+	var created struct {
+		ID string `json:"Id"`
+	}
+	if err := c.json(ctx, http.MethodPost, "/containers/"+url.PathEscape(id)+"/exec", nil,
+		map[string]any{"Cmd": cmd, "AttachStdout": true, "AttachStderr": true}, &created); err != nil {
+		return 0, "", err
+	}
+	res, err := c.do(ctx, http.MethodPost, "/exec/"+url.PathEscape(created.ID)+"/start", nil, map[string]any{"Detach": false, "Tty": false}, nil)
+	if err != nil {
+		return 0, "", err
+	}
+	out, streamErr := demux(res.Body)
+	_ = res.Body.Close()
+	// The stream normally ends when the process does, but a proxy timeout or
+	// a reset connection can cut it short: only the exec's own state says
+	// whether it finished, and with which code.
+	for {
+		var info struct {
+			ExitCode *int `json:"ExitCode"` // null while running
+			Running  bool `json:"Running"`
+		}
+		if err := c.json(ctx, http.MethodGet, "/exec/"+url.PathEscape(created.ID)+"/json", nil, nil, &info); err != nil {
+			return 0, out, err
+		}
+		if !info.Running && info.ExitCode != nil {
+			return *info.ExitCode, out, nil
+		}
+		select {
+		case <-ctx.Done():
+			if streamErr != nil {
+				return 0, out, fmt.Errorf("%w (output stream: %w)", ctx.Err(), streamErr)
+			}
+			return 0, out, ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+}
+
+// demux reads a multiplexed stdout/stderr stream (8-byte frame headers) and
+// keeps the last 4 KiB of output. Its error is nil only for a clean end.
+func demux(r io.Reader) (string, error) {
+	const keep = 4096
+	var buf []byte
+	hdr := make([]byte, 8)
+	var err error
+	for {
+		if _, err = io.ReadFull(r, hdr); err != nil {
+			if errors.Is(err, io.EOF) {
+				err = nil // between frames: the normal end
+			}
+			break
+		}
+		n := int64(hdr[4])<<24 | int64(hdr[5])<<16 | int64(hdr[6])<<8 | int64(hdr[7])
+		// Only the tail is kept; never allocate what a garbled header claims.
+		if n > keep {
+			if _, err = io.CopyN(io.Discard, r, n-keep); err != nil {
+				break
+			}
+			n = keep
+		}
+		chunk := make([]byte, n)
+		var got int
+		got, err = io.ReadFull(r, chunk)
+		buf = append(buf, chunk[:got]...)
+		if err != nil {
+			break
+		}
+		if len(buf) > 2*keep {
+			buf = buf[len(buf)-keep:]
+		}
+	}
+	if errors.Is(err, io.EOF) {
+		err = io.ErrUnexpectedEOF // inside a frame
+	}
+	if len(buf) > keep {
+		buf = buf[len(buf)-keep:]
+	}
+	return string(bytes.TrimSpace(buf)), err
 }
