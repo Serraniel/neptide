@@ -118,6 +118,13 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("--window: %w", err)
 	}
+	// Go silently falls back to UTC for an unknown TZ; windows would then
+	// open at the wrong hour.
+	if tz := strings.TrimPrefix(os.Getenv("TZ"), ":"); tz != "" {
+		if _, err := time.LoadLocation(tz); err != nil {
+			return fmt.Errorf("TZ=%q is not a known time zone (use a name like Europe/Berlin): %w", tz, err)
+		}
+	}
 	mode := rollout.ModeUpdate
 	if *monitor {
 		mode = rollout.ModeNotify
@@ -177,7 +184,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		defer func() { _ = srv.Close() }()
 		log.Info("metrics on " + ln.Addr().String() + "/metrics")
 	}
-	log.Info("neptide started", "version", buildVersion, "interval", interval.String(), "monitor_only", *monitor)
+	log.Info("neptide started", "version", buildVersion, "interval", interval.String(), "monitor_only", *monitor,
+		"time_zone", time.Now().Format("MST -0700"))
 	for {
 		start := time.Now()
 		events, err := u.Run(ctx)
@@ -193,7 +201,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-time.After(*interval):
+		case <-time.After(nextCycle(*interval, u.NextWindow())):
 		}
 	}
 }
@@ -240,4 +248,17 @@ func split(s string) []string {
 		}
 	}
 	return out
+}
+
+// nextCycle waits the interval, or less if a deferred update's maintenance
+// window opens sooner: a window shorter than the interval is never missed,
+// and updates start right when their window opens.
+func nextCycle(interval time.Duration, window time.Time) time.Duration {
+	if window.IsZero() {
+		return interval
+	}
+	if d := time.Until(window) + time.Second; d < interval {
+		return max(d, time.Second)
+	}
+	return interval
 }

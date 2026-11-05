@@ -56,7 +56,9 @@ A cycle counts as a success only if every target was checked and handled; a fail
 
 `neptide.window` (or `--window` for every target) names when updates may be applied: entries of `DAYS HH:MM-HH:MM` separated by `;`, where DAYS is `daily`, a day (`Mon`), a range (`Mon-Fri`) or a list (`Sat,Sun`). A range may end past midnight (`Fri 22:00-02:00` belongs to Friday). Times follow the container's `TZ`, e.g. `TZ=Europe/Berlin`.
 
-Outside the window, updates are reported as available, with a note, and applied in the first cycle inside it. So pick an `--interval` shorter than the window: with `--interval 30m` and `Sun 03:00-04:00`, updates land on Sunday between 03:00 and 03:30. That is also how to schedule updates for a fixed time. An empty `neptide.window=""` label lifts a default window for one container.
+Outside the window, an update is reported as a `deferred` event (not notified by default; add it to `--notify-on` if you want to hear about it) and applied when the window opens: neptide shortens its next sleep to wake up right then, so a window shorter than `--interval` is never missed, and `Sun 03:00-04:00` updates start at Sunday 03:00. An empty `neptide.window=""` label lifts a default window for one container.
+
+`TZ` must be a zone name such as `Europe/Berlin`; neptide refuses to start with an unknown one instead of silently using UTC, and logs the zone it uses. Windows follow the wall clock, so on daylight-saving days a window between 02:00 and 03:00 is skipped (spring) or open twice as long (autumn); avoid that hour. Containers sharing the network of an updated container (`network_mode: container:X`) are restarted with it, whatever their own window says, because they would lose their network otherwise.
 
 ### Private registries
 

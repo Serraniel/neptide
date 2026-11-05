@@ -114,6 +114,32 @@ func (ws Windows) Open(t time.Time) bool {
 	return false
 }
 
+// Next returns when a window is next open at or after t: t itself if one
+// is open now, the zero time if there are no windows.
+func (ws Windows) Next(t time.Time) time.Time {
+	if len(ws) == 0 || ws.Open(t) {
+		return t
+	}
+	var best time.Time
+	day := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+	for i := 0; i <= 7; i++ {
+		d := day.AddDate(0, 0, i)
+		for _, w := range ws {
+			if !w.days[d.Weekday()] {
+				continue
+			}
+			c := time.Date(d.Year(), d.Month(), d.Day(), w.start/60, w.start%60, 0, 0, t.Location())
+			if c.After(t) && (best.IsZero() || c.Before(best)) {
+				best = c
+			}
+		}
+		if !best.IsZero() {
+			return best
+		}
+	}
+	return best
+}
+
 func (ws Windows) String() string {
 	specs := make([]string, len(ws))
 	for i, w := range ws {

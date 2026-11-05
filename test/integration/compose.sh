@@ -22,9 +22,10 @@ build v2 "test -f /version"
 closed="daily $(date -d '+2 hour' +%H:%M)-$(date -d '+2 hour 1 min' +%H:%M)"
 echo "== outside the maintenance window -> expect no update"
 out=$(NEPTIDE_WINDOW="$closed" run_neptide); echo "$out"
-echo "$out" | grep -q "waits for the maintenance window" || fail "closed window not reported"
+echo "$out" | grep -q "waits for its maintenance window" || fail "closed window not reported"
 [ "$(docker exec neptide-it-app cat /version)" = v1 ] || fail "updated outside the maintenance window"
-echo "== rebuilt under same tag -> expect update"; run_neptide
+open="daily $(date -d '-1 min' +%H:%M)-$(date -d '+10 min' +%H:%M)"
+echo "== inside the maintenance window -> expect update"; NEPTIDE_WINDOW="$open" run_neptide
 [ "$(docker exec neptide-it-app cat /version)" = v2 ] || fail "not updated to v2"
 docker inspect -f '{{range .Config.Env}}{{.}} {{end}}' neptide-it-app | grep -q FOO=bar || fail "env lost"
 [ "$(docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' neptide-it-app)" = unless-stopped ] || fail "restart policy lost"

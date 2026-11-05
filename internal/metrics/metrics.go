@@ -58,7 +58,7 @@ func (m *Metrics) Cycle(start time.Time, events []updater.Event, err error) {
 	pending := map[string]bool{}
 	for _, e := range events {
 		m.events[e.Kind]++
-		if e.Kind == updater.Available {
+		if e.Kind == updater.Available || e.Kind == updater.Deferred {
 			pending[target(e)] = true
 		}
 	}
@@ -73,7 +73,7 @@ func target(e updater.Event) string {
 }
 
 // kinds are always reported, so a rate() over them never starts at "no data".
-var kinds = []updater.EventKind{updater.Available, updater.Beyond, updater.Updated, updater.RolledBack, updater.Failed}
+var kinds = []updater.EventKind{updater.Available, updater.Deferred, updater.Beyond, updater.Updated, updater.RolledBack, updater.Failed}
 
 // WriteTo writes the text exposition format.
 func (m *Metrics) WriteTo(w io.Writer) (int64, error) {
