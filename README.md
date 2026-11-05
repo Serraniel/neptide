@@ -62,6 +62,14 @@ A cycle counts as a success only if every target was checked and handled; a fail
 
 Hooks run with `sh -c`. Images without a shell take a JSON argv, as in a Dockerfile: `neptide.hook.pre-update=["/app/backup", "--now"]`. Each hook may take `neptide.hook.timeout` (default 5m). Docker cannot stop a command started with exec, so neptide wraps shell hooks in `timeout -s KILL` where the image has a working one. GNU coreutils kills the whole hook; busybox (Alpine) only kills the shell, so children of a compound hook (`a && b`) and JSON-form hooks may keep running after neptide gives up. A failing hook's last output (up to 4 KiB) goes into the event and its notifications, so keep secrets out of what it prints. A container that is crash-looping or paused is updated without its pre-update hook. Hooks apply to containers; swarm services are updated by Swarm itself.
 
+### Notifications
+
+`--notify` takes [shoutrrr](https://shoutrrr.nickfedor.com/) URLs (Discord, Slack, Teams, Telegram, ntfy, Gotify, e-mail, generic webhooks …), and `--notify-on` picks the event kinds. Every message has a title such as `neptide@nas: updated web` and a level (`info`, `warning` for releases outside the track, `error` for failures and rollbacks), which services that support them show as an embed title and colour or a priority. Set `NEPTIDE_HOST_NAME` when the container's hostname is not meaningful.
+
+`--notify-digest` sends one message per cycle instead of one per event: the title counts the events (`neptide@nas: 1 failed, 3 updated`), the body lists them (cut at about 3500 characters with "… and N more", so it fits every service), and the level is the worst one.
+
+A URL that sets its own `title` or `subject` (e.g. `ntfy://…?title=Updates`, `smtp://…?subject=…`) keeps it, and neptide's title goes into the first line of the message instead. `NEPTIDE_HOST_NAME` is an environment variable only.
+
 ### Maintenance windows
 
 `neptide.window` (or `--window` for every target) names when updates may be applied: entries of `DAYS HH:MM-HH:MM` separated by `;`, where DAYS is `daily`, a day (`Mon`), a range (`Mon-Fri`) or a list (`Sat,Sun`). A range may end past midnight (`Fri 22:00-02:00` belongs to Friday). Times follow the container's `TZ`, e.g. `TZ=Europe/Berlin`.
