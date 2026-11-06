@@ -12,6 +12,9 @@ func TestKumaTargets(t *testing.T) {
 	if ts, err := kumaTargets("", "", ""); err != nil || ts != nil {
 		t.Errorf("off: %v %v", ts, err)
 	}
+	if _, err := kumaTargets("", "u", ""); err == nil {
+		t.Error("credentials without --kuma-url must be refused")
+	}
 	if _, err := kumaTargets("kuma:3001", "u", ""); err == nil {
 		t.Error("a URL without scheme must be refused")
 	}

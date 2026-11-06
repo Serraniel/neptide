@@ -88,9 +88,9 @@ Outside the window, an update is reported as a `deferred` event (not notified by
 With `--kuma-url https://kuma.example.org --kuma-username neptide` and the password in `--kuma-password-file` (or `NEPTIDE_KUMA_PASSWORD`, never a flag), a container's monitors go into a manual maintenance window while it is recreated. The window ends once the health gate passes or the update is rolled back.
 
 - **Which monitors:** they're found through the container's AutoKuma labels (`kuma.<id>.<type>.name`), by AutoKuma tag or by a name exactly one monitor has. Ambiguous names are skipped, so another host's monitor is never silenced.
-- **Opting out:** `nepfleet.maintenance=false` keeps a container's monitors out.
-- **If neptide dies:** the window is scheduled to end by itself after the health timeout plus 15 minutes, so it never stays open.
-- **If Kuma is down:** the update still runs, and the problem is logged.
+- **Opting out:** `neptide.maintenance=false` (or NepFleet's `nepfleet.maintenance=false`) keeps a container's monitors out.
+- **If neptide dies:** the window is scheduled to end by itself after the health timeout plus 45 minutes (it also covers the pull and a snapshot), so it never stays open.
+- **If Kuma is down:** the update still runs, and a warning is logged. An unreachable Kuma can add up to 30 seconds per updated container for the login, and the same again for closing the window.
 
 The client is `pkg/kuma`, shared with NepFleet.
 

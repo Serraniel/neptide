@@ -283,6 +283,9 @@ func checkTZ(tz string) error {
 // flag (it would show in the process list).
 func kumaTargets(url, user, passFile string) ([]kuma.Target, error) {
 	if url == "" {
+		if user != "" || passFile != "" {
+			return nil, errors.New("--kuma-username and --kuma-password-file need --kuma-url")
+		}
 		return nil, nil
 	}
 	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {

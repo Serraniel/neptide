@@ -66,7 +66,13 @@ func TestRefsFromLabels(t *testing.T) {
 	if len(got) != 2 || got[0].ID != "db" || got[0].Name != "DB s" || got[1].ID != "web" {
 		t.Errorf("refs = %+v", got)
 	}
-	if refs := RefsFromLabels(map[string]string{"kuma.web.http.name": "Web", OptOutLabel: "false"}, nil); refs != nil {
-		t.Errorf("opted out: %+v", refs)
+	for _, l := range []string{OptOutLabel, NeptideOptOutLabel} {
+		if refs := RefsFromLabels(map[string]string{"kuma.web.http.name": "Web", l: "false"}, nil); refs != nil {
+			t.Errorf("opted out with %s: %+v", l, refs)
+		}
+	}
+	tg := Target{Name: "k", URL: "https://k", Username: "u", Password: "s3cret"}
+	if s := fmt.Sprintf("%v %+v %s", tg, tg, tg); strings.Contains(s, "s3cret") {
+		t.Errorf("password printed: %s", s)
 	}
 }

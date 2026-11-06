@@ -388,9 +388,11 @@ func (u *Updater) container(ctx context.Context, name string, labels map[string]
 		rec.Exclude = snapshot.Excludes(labels[rollout.LabelSnapshotExclude])
 		rec.Log = func(msg string) { u.Log.Warn(msg) }
 	}
-	window := u.maintenance(ctx, name, labels, from, to, gate.Timeout)
-	err = rollout.RecreateContainer(ctx, u.Engine, id, next.WithDigest("").String(), rec)
-	window.close(ctx)
+	window := u.maintenance(ctx, name, labels, from, to, gate.Timeout+gate.Stable)
+	err = func() error {
+		defer window.close(ctx)
+		return rollout.RecreateContainer(ctx, u.Engine, id, next.WithDigest("").String(), rec)
+	}()
 	defer u.reattach(ctx, ct, deps, err == nil || errors.Is(err, rollout.ErrRolledBack), emit)
 	switch {
 	case errors.Is(err, rollout.ErrRolledBack):
@@ -404,8 +406,9 @@ func (u *Updater) container(ctx context.Context, name string, labels map[string]
 
 // kumaWindow is an open maintenance window, or nothing.
 type kumaWindow struct {
-	u *Updater
-	w *kuma.Window
+	u    *Updater
+	w    *kuma.Window
+	name string
 }
 
 // maintenance puts the container's monitors into maintenance in every Kuma
@@ -415,13 +418,18 @@ func (u *Updater) maintenance(ctx context.Context, name string, labels map[strin
 	if len(u.Opts.Kuma) == 0 || len(refs) == 0 {
 		return kumaWindow{}
 	}
-	// Ends by itself if neptide dies before closing it.
-	maxDuration := max(gate, time.Minute) + 15*time.Minute
+	// Ends by itself if neptide dies before closing it. The window also
+	// covers the pull and a snapshot, hence the generous margin.
+	maxDuration := max(gate, time.Minute) + 45*time.Minute
 	w, warnings := kuma.Open(ctx, u.Opts.Kuma, refs, "neptide: updating "+name, from+" → "+to, maxDuration, nil)
 	for _, msg := range warnings {
-		u.Log.Info(msg, "target", name)
+		if strings.HasSuffix(msg, "in maintenance") {
+			u.Log.Info(msg, "target", name)
+		} else {
+			u.Log.Warn(msg, "target", name)
+		}
 	}
-	return kumaWindow{u: u, w: w}
+	return kumaWindow{u: u, w: w, name: name}
 }
 
 func (k kumaWindow) close(ctx context.Context) {
@@ -429,7 +437,7 @@ func (k kumaWindow) close(ctx context.Context) {
 		return
 	}
 	for _, msg := range k.w.Close(context.WithoutCancel(ctx), nil) {
-		k.u.Log.Warn(msg)
+		k.u.Log.Warn(msg, "target", k.name)
 	}
 }
 

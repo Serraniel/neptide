@@ -5,6 +5,7 @@ package kuma
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"sort"
@@ -14,8 +15,13 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// OptOutLabel on a service keeps its monitors out of maintenance windows.
-const OptOutLabel = "nepfleet.maintenance"
+// OptOutLabel on a service or container keeps its monitors out of
+// maintenance windows; NeptideOptOutLabel is the same for standalone
+// neptide setups.
+const (
+	OptOutLabel        = "nepfleet.maintenance"
+	NeptideOptOutLabel = "neptide.maintenance"
+)
 
 // MonitorRef identifies a stack's monitor: ID is the AutoKuma id (the
 // <id> in kuma.<id>.<type>.name), Name its display name.
@@ -48,7 +54,7 @@ func MonitorRefs(compose []byte, env map[string]string) []MonitorRef {
 // ${VAR} in names is taken from env; labels of a running container are
 // already interpolated, so env may be nil there.
 func RefsFromLabels(labels map[string]string, env map[string]string) []MonitorRef {
-	if labels[OptOutLabel] == "false" {
+	if labels[OptOutLabel] == "false" || labels[NeptideOptOutLabel] == "false" {
 		return nil
 	}
 	var out []MonitorRef
@@ -130,6 +136,14 @@ type Target struct {
 	Name, URL, Username, Password string
 }
 
+// String never shows the password (also used by %v and %+v).
+func (t Target) String() string { return t.Name + " (" + t.URL + ", user " + t.Username + ")" }
+
+// LogValue keeps the password out of structured logs.
+func (t Target) LogValue() slog.Value {
+	return slog.GroupValue(slog.String("name", t.Name), slog.String("url", t.URL), slog.String("username", t.Username))
+}
+
 // Window is an open maintenance window across instances.
 type Window struct {
 	parts []open
@@ -144,7 +158,7 @@ type open struct {
 // target that has them. Problems are returned as warnings, never as errors:
 // a monitoring outage must not block a deployment.
 // The window is scheduled from a minute ago until maxDuration from now, so it
-// expires on its own even if NepFleet is killed before it can close it.
+// expires on its own even if the caller is killed before it can close it.
 func Open(ctx context.Context, targets []Target, monitors []MonitorRef, title, description string, maxDuration time.Duration, hc *http.Client) (*Window, []string) {
 	w := &Window{}
 	var warnings []string
