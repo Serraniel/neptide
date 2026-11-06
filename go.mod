@@ -2,7 +2,11 @@ module github.com/Serraniel/neptide
 
 go 1.27.3
 
-require github.com/nicholas-fedor/shoutrrr v0.23.0
+require (
+	github.com/coder/websocket v1.8.15
+	github.com/nicholas-fedor/shoutrrr v0.23.0
+	go.yaml.in/yaml/v3 v3.0.6
+)
 
 require (
 	github.com/eclipse/paho.golang v0.23.0 // indirect

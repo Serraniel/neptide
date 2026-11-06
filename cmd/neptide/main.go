@@ -25,6 +25,7 @@ import (
 	"github.com/Serraniel/neptide/internal/metrics"
 	"github.com/Serraniel/neptide/internal/updater"
 	"github.com/Serraniel/neptide/pkg/engine"
+	"github.com/Serraniel/neptide/pkg/kuma"
 	"github.com/Serraniel/neptide/pkg/registry"
 	"github.com/Serraniel/neptide/pkg/rollout"
 	"github.com/Serraniel/neptide/pkg/version"
@@ -97,6 +98,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 	dockerConfig := fs.String("docker-config", env("DOCKER_CONFIG_FILE", defaultDockerConfig()), "Docker config.json with registry credentials")
 	insecure := fs.String("insecure-registries", env("INSECURE_REGISTRIES", ""), "comma separated registry hosts reached over plain HTTP")
 	jsonLog := fs.Bool("log-json", envBool("LOG_JSON", false), "log as JSON")
+	kumaURL := fs.String("kuma-url", env("KUMA_URL", ""), "Uptime Kuma base URL: monitors from a container's kuma.* labels go into maintenance while it is updated (off when empty)")
+	kumaUser := fs.String("kuma-username", env("KUMA_USERNAME", ""), "Uptime Kuma user")
+	kumaPassFile := fs.String("kuma-password-file", env("KUMA_PASSWORD_FILE", ""), "file with the Uptime Kuma password (or set NEPTIDE_KUMA_PASSWORD)")
 	metricsAddr := fs.String("metrics-listen", env("METRICS_LISTEN", ""), "serve Prometheus metrics on this address, e.g. :9090 (off when empty)")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -107,6 +111,11 @@ func run(args []string, stdout, stderr io.Writer) error {
 		handler = slog.NewJSONHandler(stderr, nil)
 	}
 	log := slog.New(handler)
+
+	kumaTargets, err := kumaTargets(*kumaURL, *kumaUser, *kumaPassFile)
+	if err != nil {
+		return err
+	}
 
 	tr, err := version.ParseTrack(*track)
 	if err != nil {
@@ -162,6 +171,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 			SnapshotKeep:   *snapKeep,
 			Gate:           rollout.Gate{Timeout: *healthTimeout, Stable: *stable},
 			SwarmTimeout:   *swarmTimeout,
+			Kuma:           kumaTargets,
 		},
 	}
 
@@ -266,4 +276,31 @@ func checkTZ(tz string) error {
 		return fmt.Errorf("TZ=%q is not a known time zone (use a name like Europe/Berlin): %w", tz, err)
 	}
 	return nil
+}
+
+// kumaTargets is the Uptime Kuma to put monitors into maintenance in, if
+// configured. The password comes from a file or the environment, never a
+// flag (it would show in the process list).
+func kumaTargets(url, user, passFile string) ([]kuma.Target, error) {
+	if url == "" {
+		if user != "" || passFile != "" {
+			return nil, errors.New("--kuma-username and --kuma-password-file need --kuma-url")
+		}
+		return nil, nil
+	}
+	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
+		return nil, fmt.Errorf("--kuma-url: %q is not an http(s) URL", url)
+	}
+	pass := os.Getenv("NEPTIDE_KUMA_PASSWORD")
+	if passFile != "" {
+		raw, err := os.ReadFile(passFile)
+		if err != nil {
+			return nil, fmt.Errorf("--kuma-password-file: %w", err)
+		}
+		pass = strings.TrimRight(string(raw), "\r\n")
+	}
+	if user == "" || pass == "" {
+		return nil, errors.New("--kuma-url needs --kuma-username and a password (--kuma-password-file or NEPTIDE_KUMA_PASSWORD)")
+	}
+	return []kuma.Target{{Name: url, URL: strings.TrimRight(url, "/"), Username: user, Password: pass}}, nil
 }

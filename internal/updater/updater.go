@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Serraniel/neptide/pkg/engine"
+	"github.com/Serraniel/neptide/pkg/kuma"
 	"github.com/Serraniel/neptide/pkg/registry"
 	"github.com/Serraniel/neptide/pkg/rollout"
 	"github.com/Serraniel/neptide/pkg/snapshot"
@@ -85,6 +86,10 @@ type Options struct {
 	ForceNotify bool
 	// SwarmTimeout bounds one service update.
 	SwarmTimeout time.Duration
+	// Kuma instances whose monitors (matched by the container's AutoKuma
+	// kuma.* labels) go into maintenance while a container is recreated,
+	// until its health gate passes or it is rolled back.
+	Kuma []kuma.Target
 }
 
 // Updater holds its collaborators.
@@ -383,7 +388,11 @@ func (u *Updater) container(ctx context.Context, name string, labels map[string]
 		rec.Exclude = snapshot.Excludes(labels[rollout.LabelSnapshotExclude])
 		rec.Log = func(msg string) { u.Log.Warn(msg) }
 	}
-	err = rollout.RecreateContainer(ctx, u.Engine, id, next.WithDigest("").String(), rec)
+	window := u.maintenance(ctx, name, labels, from, to, gate.Timeout+gate.Stable)
+	err = func() error {
+		defer window.close(ctx)
+		return rollout.RecreateContainer(ctx, u.Engine, id, next.WithDigest("").String(), rec)
+	}()
 	defer u.reattach(ctx, ct, deps, err == nil || errors.Is(err, rollout.ErrRolledBack), emit)
 	switch {
 	case errors.Is(err, rollout.ErrRolledBack):
@@ -392,6 +401,43 @@ func (u *Updater) container(ctx context.Context, name string, labels map[string]
 		fail(err)
 	default:
 		emit(Event{Kind: Updated, Target: name, From: from, To: to})
+	}
+}
+
+// kumaWindow is an open maintenance window, or nothing.
+type kumaWindow struct {
+	u    *Updater
+	w    *kuma.Window
+	name string
+}
+
+// maintenance puts the container's monitors into maintenance in every Kuma
+// instance. A monitoring outage never blocks the update: problems are logged.
+func (u *Updater) maintenance(ctx context.Context, name string, labels map[string]string, from, to string, gate time.Duration) kumaWindow {
+	refs := kuma.RefsFromLabels(labels, nil)
+	if len(u.Opts.Kuma) == 0 || len(refs) == 0 {
+		return kumaWindow{}
+	}
+	// Ends by itself if neptide dies before closing it. The window also
+	// covers the pull and a snapshot, hence the generous margin.
+	maxDuration := max(gate, time.Minute) + 45*time.Minute
+	w, warnings := kuma.Open(ctx, u.Opts.Kuma, refs, "neptide: updating "+name, from+" → "+to, maxDuration, nil)
+	for _, msg := range warnings {
+		if strings.HasSuffix(msg, "in maintenance") {
+			u.Log.Info(msg, "target", name)
+		} else {
+			u.Log.Warn(msg, "target", name)
+		}
+	}
+	return kumaWindow{u: u, w: w, name: name}
+}
+
+func (k kumaWindow) close(ctx context.Context) {
+	if k.w == nil {
+		return
+	}
+	for _, msg := range k.w.Close(context.WithoutCancel(ctx), nil) {
+		k.u.Log.Warn(msg, "target", k.name)
 	}
 }
 
