@@ -142,7 +142,7 @@ func hasOwnTitle(raw string) bool {
 // 4096 characters including the title).
 const maxDigest = 3500
 
-var digestOrder = []updater.EventKind{updater.Failed, updater.RolledBack, updater.Updated, updater.Available, updater.Deferred, updater.Beyond}
+var digestOrder = []updater.EventKind{updater.Failed, updater.RolledBack, updater.Updated, updater.Restarted, updater.Available, updater.Deferred, updater.Beyond}
 
 var rank = map[string]int{"info": 0, "warning": 1, "error": 2}
 
@@ -168,6 +168,8 @@ func headline(e updater.Event) string {
 		return "update available for " + e.Target
 	case updater.Deferred:
 		return "update for " + e.Target + " waits for its window"
+	case updater.Restarted:
+		return "restarted " + e.Target + " on schedule"
 	case updater.Beyond:
 		return e.Target + ": new release outside its track"
 	}

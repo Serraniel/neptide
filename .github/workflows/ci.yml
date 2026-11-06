@@ -58,6 +58,8 @@ jobs:
         run: test/integration/netns.sh /tmp/neptide
       - name: Pre- and post-update hooks
         run: test/integration/hooks.sh /tmp/neptide
+      - name: Scheduled restarts
+        run: test/integration/restart.sh /tmp/neptide
       - name: Swarm update and rollback (docker:dind)
         run: test/integration/swarm.sh /tmp/neptide
 
