@@ -1,5 +1,7 @@
 # neptide
 
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/Serraniel/neptide/badge)](https://scorecard.dev/viewer/?uri=github.com/Serraniel/neptide)
+
 Keeps Docker containers and **Swarm services** on their newest image, and rolls them back when the new image is unhealthy.
 
 It works standalone as a replacement for Watchtower or Shepherd, and it is the update engine of [NepFleet](https://github.com/Serraniel/nepfleet).
