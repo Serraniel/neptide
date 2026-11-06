@@ -15,7 +15,7 @@ before=$(docker inspect -f '{{.State.StartedAt}}' $C)
 run_neptide() { NEPTIDE_ONCE=true NEPTIDE_STABLE=2s NEPTIDE_SERVICES=false NEPTIDE_NOTIFY= "$BIN" 2>&1 | grep -v 'neptide started'; }
 echo "== window not open yet -> no restart"; run_neptide
 [ "$(docker inspect -f '{{.State.StartedAt}}' $C)" = "$before" ] || fail "restarted before the window"
-sleep $(( 61 - $(date +%S) + 1 ))
+sleep $(( 61 - 10#$(date +%S) + 1 ))   # 10#: "08" is not octal
 echo "== window open -> restart"; out=$(run_neptide); echo "$out"
 echo "$out" | grep -q "Restarted container $C on schedule" || fail "not restarted in the window"
 after=$(docker inspect -f '{{.State.StartedAt}}' $C)

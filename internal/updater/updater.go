@@ -542,6 +542,10 @@ func (u *Updater) scheduledRestart(ctx context.Context, name string, labels map[
 	if !sched.Due(u.now(), started) {
 		return
 	}
+	if u.Opts.ForceNotify {
+		u.Log.Info("monitor only: " + name + " would be restarted on schedule (" + sched.String() + ")")
+		return
+	}
 	gate := u.Opts.Gate
 	if pol, err := u.policy(labels); err == nil && pol.HealthTimeout > 0 {
 		gate.Timeout = pol.HealthTimeout

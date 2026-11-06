@@ -65,7 +65,7 @@ Hooks run with `sh -c`. Images without a shell take a JSON argv, as in a Dockerf
 
 ### Scheduled restarts
 
-Some containers degrade over days, and the usual workaround is a sidecar that recreates them on a timer. `neptide.restart` does it with the same safety as an update: an interval (`6h`: when the container has been running that long) or a window in the maintenance-window syntax (`daily 04:00-05:00`: once per window), then the health gate, and containers sharing its network follow it. A restart that fails its health check is reported as `failed`; a successful one as `restarted` (add it to `--notify-on` to be told). The window needs an `--interval` shorter than itself, as for updates. A memory limit (`mem_limit`) is often the better fix for a slow leak.
+Some containers degrade over days, and the usual workaround is a sidecar that recreates them on a timer. `neptide.restart` does it with the same safety as an update: an interval (`6h`: when the container has been running that long) or a window in the maintenance-window syntax (`daily 04:00-05:00`: once per window), then the health gate, and containers sharing its network follow it. A restart that fails its health check is reported as `failed`; a successful one as `restarted` (add it to `--notify-on` to be told). The window needs an `--interval` shorter than itself, as for updates. `--monitor-only` only logs which restarts are due. A memory limit (`mem_limit`) is often the better fix for a slow leak.
 
 ### Notifications
 
