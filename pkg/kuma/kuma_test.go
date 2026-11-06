@@ -135,7 +135,7 @@ func TestAgainstKuma(t *testing.T) {
 	if err != nil || d.has(posted) {
 		t.Errorf("incident still shown after Close: %+v %v", d, err)
 	}
-	if d != nil && !d.blocked() && !d.has(other) {
+	if d != nil && !d.has(other) {
 		t.Errorf("Close resolved someone else's incident too: %+v", d)
 	}
 }

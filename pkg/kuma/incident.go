@@ -14,8 +14,8 @@ import (
 	"time"
 )
 
-// statusPageData is the part of /api/status-page/<slug> used here. Kuma 2.0
-// shows one pinned incident (incident), later versions a list (incidents).
+// statusPageData is the part of /api/status-page/<slug> used here. Kuma
+// 2.0.x shows one pinned incident (incident), 2.1+ a list (incidents).
 type statusPageData struct {
 	Incident        *struct{ ID int }   `json:"incident"`
 	Incidents       *[]struct{ ID int } `json:"incidents"`
@@ -98,8 +98,8 @@ func (k *Client) PostIncident(ctx context.Context, slug, title, content, style s
 	return r.Incident.ID, nil
 }
 
-// ResolveIncident resolves one incident (Uptime Kuma 2), leaving any other
-// incident on the page alone.
+// ResolveIncident resolves one incident (Uptime Kuma 2.1+), leaving any
+// other incident on the page alone.
 func (k *Client) ResolveIncident(ctx context.Context, slug string, id int) error {
 	raw, err := k.c.call(ctx, "resolveIncident", slug, id)
 	_, err = decodeResult("resolveIncident", raw, err)
@@ -119,9 +119,10 @@ type postedIncident struct {
 
 // OpenIncident posts a warning incident on every status page, in every
 // target, that shows one of the monitors: for changes that degrade a service
-// without taking it down (a rolling update of several replicas). An
-// incident written by a person is never hidden: Kuma 2.0 shows only one per
-// page, so such pages are skipped. Like Open, problems are warnings.
+// without taking it down (a rolling update of several replicas). Needs
+// Uptime Kuma 2.1+, where a page lists several incidents (one written by a
+// person stays visible) and one can be resolved. Like Open, problems are
+// warnings, never errors.
 func OpenIncident(ctx context.Context, targets []Target, monitors []MonitorRef, title, content string, hc *http.Client) (*Incident, []string) {
 	inc := &Incident{}
 	var warnings []string
@@ -158,8 +159,8 @@ func OpenIncident(ctx context.Context, targets []Target, monitors []MonitorRef, 
 				if !shows(d, ids) {
 					continue
 				}
-				if d.blocked() {
-					warnings = append(warnings, fmt.Sprintf("Uptime Kuma %s: status page %s already has an incident, not replacing it", t.Name, p.Slug))
+				if d.singleIncident() {
+					warnings = append(warnings, fmt.Sprintf("Uptime Kuma %s: status page %s: incidents need Uptime Kuma 2.1 or newer, none posted", t.Name, p.Slug))
 					continue
 				}
 				id, err := k.PostIncident(tctx, p.Slug, title, content, StyleWarning)
@@ -183,9 +184,11 @@ func OpenIncident(ctx context.Context, targets []Target, monitors []MonitorRef, 
 	return inc, warnings
 }
 
-// blocked: the page shows only one incident (Kuma 2.0) and has one, which
-// a new incident would hide. Pages with a list just get one more.
-func (d *statusPageData) blocked() bool { return d.Incidents == nil && d.Incident != nil }
+// singleIncident: Kuma 2.0.x, which shows one incident per page and cannot
+// resolve a single incident (resolveIncident came with 2.1), so NepFleet
+// does not post there: it could neither leave a person's incident visible
+// nor remove its own cleanly.
+func (d *statusPageData) singleIncident() bool { return d.Incidents == nil }
 
 // has reports whether incident id is shown.
 func (d *statusPageData) has(id int) bool {
