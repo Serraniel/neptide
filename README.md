@@ -44,7 +44,7 @@ On Swarm, put labels under `deploy.labels`, the service labels. Images pinned to
 
 Every flag can also be set as an environment variable, `NEPTIDE_<FLAG>`; for example `--monitor-only` becomes `NEPTIDE_MONITOR_ONLY=true`.
 
-`--interval 6h` · `--window` · `--once` · `--monitor-only` · `--all` · `--track` · `--health-timeout` · `--stable 15s` · `--swarm-timeout 15m` · `--containers` / `--services` · `--notify <urls>` · `--notify-digest` · `--notify-on available,beyond_track,updated,rolled_back,failed` · `--docker-config` · `--insecure-registries` · `--metrics-listen` · `--log-json`
+`--interval 6h` · `--window` · `--once` · `--monitor-only` · `--all` · `--track` · `--health-timeout` · `--stable 15s` · `--swarm-timeout 15m` · `--containers` / `--services` · `--notify <urls>` · `--notify-digest` · `--notify-on available,beyond_track,updated,rolled_back,failed` · `--docker-config` · `--insecure-registries` · `--metrics-listen` · `--kuma-url` / `--kuma-username` / `--kuma-password-file` · `--log-json`
 
 ### Metrics
 
@@ -82,6 +82,17 @@ A URL that sets its own `title` or `subject` (e.g. `ntfy://…?title=Updates`, `
 Outside the window, an update is reported as a `deferred` event (not notified by default; add it to `--notify-on` if you want to hear about it) and applied when the window opens: neptide shortens its next sleep to wake up right then, so a window shorter than `--interval` is never missed, and `Sun 03:00-04:00` updates start at Sunday 03:00. An empty `neptide.window=""` label lifts a default window for one container.
 
 `TZ` must be a zone name such as `Europe/Berlin`; neptide refuses to start with an unknown one instead of silently using UTC, and logs the zone it uses. Windows follow the wall clock, so on daylight-saving days a window between 02:00 and 03:00 is skipped (spring) or open twice as long (autumn); avoid that hour. Containers sharing the network of an updated container (`network_mode: container:X`) are restarted with it, whatever their own window says, because they would lose their network otherwise.
+
+### Uptime Kuma maintenance
+
+With `--kuma-url https://kuma.example.org --kuma-username neptide` and the password in `--kuma-password-file` (or `NEPTIDE_KUMA_PASSWORD`, never a flag), a container's monitors go into a manual maintenance window while it is recreated. The window ends once the health gate passes or the update is rolled back.
+
+- **Which monitors:** they're found through the container's AutoKuma labels (`kuma.<id>.<type>.name`), by AutoKuma tag or by a name exactly one monitor has. Ambiguous names are skipped, so another host's monitor is never silenced.
+- **Opting out:** `neptide.maintenance=false` (or NepFleet's `nepfleet.maintenance=false`) keeps a container's monitors out.
+- **If neptide dies:** the window is scheduled to end by itself after the health timeout plus 45 minutes (it also covers the pull and a snapshot), so it never stays open.
+- **If Kuma is down:** the update still runs, and a warning is logged. An unreachable Kuma can add up to 30 seconds per updated container for the login, and the same again for closing the window.
+
+The client is `pkg/kuma`, shared with NepFleet.
 
 ### Private registries
 
