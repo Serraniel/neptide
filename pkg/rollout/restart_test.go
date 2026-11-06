@@ -32,6 +32,22 @@ func TestRestartSchedule(t *testing.T) {
 			t.Errorf("now %s started %s: due=%v", c.now.Format("02 15:04"), c.started.Format("02 15:04"), got)
 		}
 	}
+	night, _ := ParseRestart("daily 23:00-01:00")
+	for _, c := range []struct {
+		now, started time.Time
+		due          bool
+	}{
+		{at(6, 0, 30), at(5, 23, 30), false}, // restarted in this window, which began yesterday
+		{at(6, 0, 30), at(5, 22, 59), true},
+		{at(6, 1, 0), at(5, 12, 0), false}, // the end minute is closed
+	} {
+		if got := night.Due(c.now, c.started); got != c.due {
+			t.Errorf("wrapped: now %s started %s: due=%v", c.now.Format("02 15:04"), c.started.Format("02 15:04"), got)
+		}
+	}
+	if daily.Due(at(5, 4, 10), time.Time{}) || every.Due(at(5, 4, 10), time.Time{}) {
+		t.Error("an unknown start time must never be due")
+	}
 	for _, bad := range []string{"1m", "sometimes", ""} {
 		if _, err := ParseRestart(bad); err == nil {
 			t.Errorf("%q must be rejected", bad)

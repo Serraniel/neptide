@@ -8,7 +8,9 @@ fail() { echo "FAIL: $*"; docker rm -f $C >/dev/null 2>&1; docker rmi -f $C:loca
 docker rm -f $C >/dev/null 2>&1
 # A locally built image: neptide never updates it, so only the schedule acts.
 printf 'FROM alpine:3.23\nCMD ["sleep","infinity"]\n' | docker build -q -t $C:local - >/dev/null
-# The window opens a minute from now, after the container has started.
+# The window opens a minute from now, after the container has started: not
+# in the last seconds of a minute, or the container could start inside it.
+while [ "$((10#$(date +%S)))" -ge 50 ]; do sleep 1; done
 window="daily $(date -d '+1 min' +%H:%M)-$(date -d '+10 min' +%H:%M)"
 docker run -d --name $C --label neptide.enable=true --label "neptide.restart=$window" $C:local >/dev/null
 before=$(docker inspect -f '{{.State.StartedAt}}' $C)

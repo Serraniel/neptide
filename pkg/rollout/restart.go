@@ -42,8 +42,11 @@ func (r RestartSchedule) String() string { return r.spec }
 // Due reports whether a container that started at started should be
 // restarted at now.
 func (r RestartSchedule) Due(now, started time.Time) bool {
+	if started.IsZero() {
+		return false // unknown start: never restart blindly
+	}
 	if r.Interval > 0 {
-		return !started.IsZero() && now.Sub(started) >= r.Interval
+		return now.Sub(started) >= r.Interval
 	}
 	if !r.Window.Open(now) {
 		return false
@@ -53,6 +56,8 @@ func (r RestartSchedule) Due(now, started time.Time) bool {
 }
 
 // openedAt is the start of the window open at t (t must be inside one).
+// Entries that touch (04:00-05:00; 05:00-06:00) count as one window; a
+// union covering every minute stops the scan after two days.
 func (ws Windows) openedAt(t time.Time) time.Time {
 	s := t.Truncate(time.Minute)
 	for i := 0; i < 2*24*60 && ws.Open(s.Add(-time.Minute)); i++ {
@@ -72,10 +77,14 @@ func Restart(ctx context.Context, e Engine, id string, gate Gate) error {
 	if s, ok := ct.Config["StopTimeout"].(float64); ok && s > 0 {
 		stop = time.Duration(s) * time.Second
 	}
-	if err := e.Stop(ctx, id, stop); err != nil {
+	// Stop and start must both happen even if neptide is told to stop
+	// meanwhile: a container stopped through the API stays down.
+	sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), stop+time.Minute)
+	defer cancel()
+	if err := e.Stop(sctx, id, stop); err != nil {
 		return fmt.Errorf("stop: %w", err)
 	}
-	if err := e.Start(ctx, id); err != nil {
+	if err := e.Start(sctx, id); err != nil {
 		return fmt.Errorf("start: %w", err)
 	}
 	return waitHealthy(ctx, e, id, gate)

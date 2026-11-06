@@ -41,7 +41,8 @@ type Event struct {
 	From   string
 	To     string
 	Err    error
-	// Window is the maintenance window a Deferred update waits for.
+	// Window is the maintenance window a Deferred update waits for, or the
+	// schedule of a Restarted container.
 	Window string
 }
 
@@ -274,7 +275,7 @@ func (u *Updater) follow(ctx context.Context, parent, oldID string, after *engin
 			continue
 		}
 		if !parentOK {
-			emit(Event{Kind: Failed, Target: dep, Err: fmt.Errorf("it shares the network of %s, which is not running cleanly after a failed update (the old version may be parked as %s-neptide-old); restore %s, then restart %s", parent, parent, parent, dep)})
+			emit(Event{Kind: Failed, Target: dep, Err: fmt.Errorf("it shares the network of %s, which is not running after neptide changed it (after a failed update the old version may be parked as %s-neptide-old); start %s, then restart %s", parent, parent, parent, dep)})
 			continue
 		}
 		gate := u.Opts.Gate
@@ -535,11 +536,14 @@ func (u *Updater) scheduledRestart(ctx context.Context, name string, labels map[
 		return
 	}
 	ct, err := u.Engine.Inspect(ctx, name)
-	if err != nil || !ct.State.Running {
-		return
+	if err != nil || !ct.State.Running || ct.State.Paused || ct.State.Restarting {
+		return // paused on purpose, or already restarting
 	}
 	started, _ := time.Parse(time.RFC3339Nano, ct.State.StartedAt)
 	if !sched.Due(u.now(), started) {
+		if len(sched.Window) > 0 && !sched.Window.Open(u.now()) && !u.Opts.ForceNotify {
+			u.deferUntil(sched.Window) // wake up when the window opens
+		}
 		return
 	}
 	if u.Opts.ForceNotify {
