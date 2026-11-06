@@ -3,6 +3,7 @@
 package kuma
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"os"
@@ -11,12 +12,13 @@ import (
 	"time"
 )
 
-// TestAgainstKuma needs a fresh Uptime Kuma: NEPFLEET_TEST_KUMA_URL=http://127.0.0.1:13001
-// (test/integration/kuma.sh starts one). It creates the admin account.
+// TestAgainstKuma needs a fresh Uptime Kuma at KUMA_TEST_URL (for example
+// http://127.0.0.1:13101, which test/integration/kuma.sh starts) and creates
+// its admin account. NEPFLEET_TEST_KUMA_URL still works.
 func TestAgainstKuma(t *testing.T) {
-	url := os.Getenv("NEPFLEET_TEST_KUMA_URL")
+	url := cmp.Or(os.Getenv("KUMA_TEST_URL"), os.Getenv("NEPFLEET_TEST_KUMA_URL"))
 	if url == "" {
-		t.Skip("NEPFLEET_TEST_KUMA_URL not set")
+		t.Skip("KUMA_TEST_URL not set")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
