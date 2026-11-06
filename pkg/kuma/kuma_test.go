@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -96,5 +97,45 @@ func TestAgainstKuma(t *testing.T) {
 	}
 	if err := k.EndMaintenance(ctx, a); err != nil {
 		t.Fatal(err)
+	}
+
+	// A status page that shows the monitor gets an incident, resolved again.
+	if raw, err := k.c.call(ctx, "addStatusPage", "NepFleet test", "nepfleet-test"); err != nil || !strings.Contains(string(raw), `"ok":true`) {
+		t.Fatalf("addStatusPage: %s %v", raw, err)
+	}
+	config := map[string]any{"slug": "nepfleet-test", "title": "NepFleet test", "description": "", "autoRefreshInterval": 300, "theme": "auto",
+		"showTags": false, "footerText": "", "customCSS": "", "showPoweredBy": true, "rssTitle": "", "showOnlyLastHeartbeat": false,
+		"showCertificateExpiry": false, "analyticsId": nil, "analyticsScriptUrl": nil, "analyticsType": nil, "domainNameList": []string{}}
+	groups := []map[string]any{{"name": "Services", "monitorList": []map[string]int{{"id": added.MonitorID}}}}
+	if raw, err := k.c.call(ctx, "saveStatusPage", "nepfleet-test", config, "/icon.svg", groups); err != nil || !strings.Contains(string(raw), `"ok":true`) {
+		t.Fatalf("saveStatusPage: %s %v", raw, err)
+	}
+	if ids, err := k.StatusPageMonitors(ctx, "nepfleet-test"); err != nil || !slices.Contains(ids, added.MonitorID) {
+		t.Fatalf("status page monitors = %v, %v", ids, err)
+	}
+	target := Target{Name: "test", URL: url, Username: user, Password: pass}
+	inc, warnings := OpenIncident(ctx, []Target{target}, []MonitorRef{{ID: "x", Name: "nepfleet-test"}}, "Rolling update", "web is updated one replica at a time", nil)
+	t.Logf("open: %v", warnings)
+	if len(inc.parts) != 1 {
+		t.Fatalf("incidents posted: %d (%v)", len(inc.parts), warnings)
+	}
+	posted := inc.parts[0].id
+	if d, err := k.statusPage(ctx, "nepfleet-test"); err != nil || !d.has(posted) {
+		t.Fatalf("incident not shown: %+v %v", d, err)
+	}
+	// Another one next to it (a person's, say) stays when ours is resolved.
+	other, err := k.PostIncident(ctx, "nepfleet-test", "Planned work", "by hand", StyleInfo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := inc.Close(ctx, nil); len(w) > 0 {
+		t.Fatal(w)
+	}
+	d, err := k.statusPage(ctx, "nepfleet-test")
+	if err != nil || d.has(posted) {
+		t.Errorf("incident still shown after Close: %+v %v", d, err)
+	}
+	if d != nil && !d.blocked() && !d.has(other) {
+		t.Errorf("Close resolved someone else's incident too: %+v", d)
 	}
 }
