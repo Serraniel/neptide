@@ -26,6 +26,7 @@ type EventKind string
 const (
 	Available  EventKind = "available"    // update found, mode notify
 	Deferred   EventKind = "deferred"     // update found, waits for its maintenance window
+	Restarted  EventKind = "restarted"    // scheduled restart (neptide.restart) passed the health gate
 	Beyond     EventKind = "beyond_track" // newer release outside the track
 	Updated    EventKind = "updated"
 	RolledBack EventKind = "rolled_back"
@@ -40,7 +41,8 @@ type Event struct {
 	From   string
 	To     string
 	Err    error
-	// Window is the maintenance window a Deferred update waits for.
+	// Window is the maintenance window a Deferred update waits for, or the
+	// schedule of a Restarted container.
 	Window string
 }
 
@@ -52,6 +54,8 @@ func (e Event) String() string {
 	switch e.Kind {
 	case Available:
 		return fmt.Sprintf("Update available for %s %s: %s → %s", what, e.Target, e.From, e.To)
+	case Restarted:
+		return fmt.Sprintf("Restarted %s %s on schedule (%s)", what, e.Target, e.Window)
 	case Deferred:
 		return fmt.Sprintf("Update for %s %s waits for its maintenance window (%s): %s → %s", what, e.Target, e.Window, e.From, e.To)
 	case Beyond:
@@ -161,6 +165,7 @@ func (u *Updater) Run(ctx context.Context) ([]Event, error) {
 		name := strings.TrimPrefix(firstOr(c.Names, c.ID), "/")
 		// By name: an earlier update in this cycle may have replaced it.
 		u.container(ctx, name, c.Labels, deps, emit)
+		u.scheduledRestart(ctx, name, c.Labels, deps, emit)
 	}
 
 	if u.Opts.SkipServices {
@@ -270,7 +275,7 @@ func (u *Updater) follow(ctx context.Context, parent, oldID string, after *engin
 			continue
 		}
 		if !parentOK {
-			emit(Event{Kind: Failed, Target: dep, Err: fmt.Errorf("it shares the network of %s, which is not running cleanly after a failed update (the old version may be parked as %s-neptide-old); restore %s, then restart %s", parent, parent, parent, dep)})
+			emit(Event{Kind: Failed, Target: dep, Err: fmt.Errorf("it shares the network of %s, which is not running after neptide changed it (after a failed update the old version may be parked as %s-neptide-old); start %s, then restart %s", parent, parent, parent, dep)})
 			continue
 		}
 		gate := u.Opts.Gate
@@ -515,4 +520,45 @@ func skip(labels map[string]string) bool {
 func autoRemove(ct *engine.Container) bool {
 	v, _ := ct.HostConfig["AutoRemove"].(bool)
 	return v
+}
+
+// scheduledRestart restarts a container whose neptide.restart schedule is
+// due, behind the health gate. A container updated in this cycle has just
+// started, so it is not due.
+func (u *Updater) scheduledRestart(ctx context.Context, name string, labels map[string]string, deps map[string][]engine.ContainerSummary, emit func(Event)) {
+	spec, ok := labels[rollout.LabelRestart]
+	if !ok {
+		return
+	}
+	sched, err := rollout.ParseRestart(spec)
+	if err != nil {
+		emit(Event{Kind: Failed, Target: name, Err: err})
+		return
+	}
+	ct, err := u.Engine.Inspect(ctx, name)
+	if err != nil || !ct.State.Running || ct.State.Paused || ct.State.Restarting {
+		return // paused on purpose, or already restarting
+	}
+	started, _ := time.Parse(time.RFC3339Nano, ct.State.StartedAt)
+	if !sched.Due(u.now(), started) {
+		if len(sched.Window) > 0 && !sched.Window.Open(u.now()) && !u.Opts.ForceNotify {
+			u.deferUntil(sched.Window) // wake up when the window opens
+		}
+		return
+	}
+	if u.Opts.ForceNotify {
+		u.Log.Info("monitor only: " + name + " would be restarted on schedule (" + sched.String() + ")")
+		return
+	}
+	gate := u.Opts.Gate
+	if pol, err := u.policy(labels); err == nil && pol.HealthTimeout > 0 {
+		gate.Timeout = pol.HealthTimeout
+	}
+	err = rollout.Restart(ctx, u.Engine, ct.ID, gate)
+	u.reattach(ctx, ct, deps, true, emit) // the namespace was recreated
+	if err != nil {
+		emit(Event{Kind: Failed, Target: name, Err: fmt.Errorf("scheduled restart: %w", err)})
+		return
+	}
+	emit(Event{Kind: Restarted, Target: name, Window: sched.String()})
 }
