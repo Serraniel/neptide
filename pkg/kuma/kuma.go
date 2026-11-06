@@ -9,12 +9,15 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
 
 // Client is a logged-in Uptime Kuma session.
 type Client struct {
-	c *conn
+	c    *conn
+	base string
+	hc   *http.Client
 }
 
 // Login connects and authenticates. Close the client when done.
@@ -28,7 +31,7 @@ func Login(ctx context.Context, url, username, password string, hc *http.Client)
 		c.close()
 		return nil, err
 	}
-	return &Client{c: c}, nil
+	return &Client{c: c, base: strings.TrimRight(url, "/"), hc: hc}, nil
 }
 
 // Setup creates the first admin account of a fresh Kuma (first-run setup).
