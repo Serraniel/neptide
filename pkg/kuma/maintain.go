@@ -183,7 +183,7 @@ func Open(ctx context.Context, targets []Target, monitors []MonitorRef, title, d
 			}
 			now := time.Now()
 			m, err := k.StartMaintenance(tctx, MaintenanceWindow{Title: title, Description: description, Monitors: ids,
-				Start: now.Add(-time.Minute), End: now.Add(maxDuration)})
+				StatusPages: k.pagesFor(tctx, ids), Start: now.Add(-time.Minute), End: now.Add(maxDuration)})
 			if err != nil {
 				return nil, err
 			}

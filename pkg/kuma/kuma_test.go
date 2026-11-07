@@ -6,6 +6,8 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"io"
+	"net/http"
 	"os"
 	"slices"
 	"strings"
@@ -63,9 +65,40 @@ func TestAgainstKuma(t *testing.T) {
 	}
 	t.Logf("monitors: %+v", mons)
 
-	m, err := k.StartMaintenance(ctx, MaintenanceWindow{Title: "NepFleet: apply test", Description: "integration test", Monitors: []int{added.MonitorID}})
+	// The default status page: created once, then left alone.
+	if err := k.EnsureStatusPage(ctx, "Maintenance", DefaultStatusPage); err != nil {
+		t.Fatal(err)
+	}
+	// Kuma sends its list of pages once, at login: look again in a new session.
+	k.Close()
+	if k, err = Login(ctx, url, user, pass, nil); err != nil {
+		t.Fatal(err)
+	}
+	defer k.Close()
+	if err := k.EnsureStatusPage(ctx, "Maintenance", DefaultStatusPage); err != nil {
+		t.Fatal(err)
+	}
+	pages, err := k.StatusPages(ctx)
+	if err != nil || len(slices.DeleteFunc(slices.Clone(pages), func(p StatusPage) bool { return p.Slug != DefaultStatusPage })) != 1 {
+		t.Fatalf("status pages = %+v, %v", pages, err)
+	}
+	pageIDs := k.pagesFor(ctx, []int{added.MonitorID})
+	if len(pageIDs) != 1 {
+		t.Fatalf("pages for the window = %v", pageIDs)
+	}
+
+	m, err := k.StartMaintenance(ctx, MaintenanceWindow{Title: "NepFleet: apply test", Description: "integration test", Monitors: []int{added.MonitorID}, StatusPages: pageIDs})
 	if err != nil {
 		t.Fatal(err)
+	}
+	res, err := http.Get(url + "/api/status-page/" + DefaultStatusPage + "?fresh=1") //nolint:gosec,noctx // the test's own Kuma
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(res.Body)
+	_ = res.Body.Close()
+	if !strings.Contains(string(body), "NepFleet: apply test") {
+		t.Errorf("the window does not show on the page: %s", body)
 	}
 	ids, err := k.MaintenanceMonitors(ctx, m)
 	if err != nil || !slices.Contains(ids, added.MonitorID) {
