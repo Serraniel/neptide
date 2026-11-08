@@ -190,6 +190,9 @@ func (s *Snapshotter) inUse(ctx context.Context, self string) (map[string]string
 			continue
 		}
 		ct, err := s.Engine.Inspect(ctx, c.ID)
+		if engine.IsNotFound(err) {
+			continue // removed since the list: it uses nothing any more
+		}
 		if err != nil {
 			// Unknown means unsafe: do not guess that the data is unused.
 			return nil, fmt.Errorf("inspect %s: %w", c.ID, err)

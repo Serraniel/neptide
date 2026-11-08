@@ -3,6 +3,8 @@
 package snapshot
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -68,5 +70,43 @@ func TestSystemPaths(t *testing.T) {
 		if got := isSystemPath(p, "/var/lib/docker"); got != want {
 			t.Errorf("isSystemPath(%q) = %v, want %v", p, got, want)
 		}
+	}
+}
+
+// listEngine lists containers, some of which are gone by the time they're inspected.
+type listEngine struct {
+	Engine
+	list []engine.ContainerSummary
+	byID map[string]*engine.Container
+	fail error
+}
+
+func (e listEngine) Containers(context.Context, ...string) ([]engine.ContainerSummary, error) {
+	return e.list, nil
+}
+
+func (e listEngine) Inspect(_ context.Context, id string) (*engine.Container, error) {
+	if c, ok := e.byID[id]; ok {
+		return c, nil
+	}
+	if e.fail != nil {
+		return nil, e.fail
+	}
+	return nil, engine.NotFoundError{What: "GET /containers/" + id + "/json"}
+}
+
+func TestInUseSkipsRemovedContainers(t *testing.T) {
+	cron := &engine.Container{ID: "cron", Name: "/app-cron", Mounts: []engine.Mount{{Type: "volume", Name: "db"}}}
+	e := listEngine{list: []engine.ContainerSummary{{ID: "self"}, {ID: "cron"}, {ID: "gone"}}, byID: map[string]*engine.Container{"cron": cron}}
+	got, err := (&Snapshotter{Engine: e}).inUse(context.Background(), "self")
+	if err != nil {
+		t.Fatalf("a container removed meanwhile uses nothing: %v", err)
+	}
+	if len(got) != 1 || got["volume:db"] != "app-cron" {
+		t.Errorf("%v", got)
+	}
+	e.fail = errors.New("daemon hiccup")
+	if _, err := (&Snapshotter{Engine: e}).inUse(context.Background(), "self"); err == nil {
+		t.Error("any other error is still unsafe to guess past")
 	}
 }
