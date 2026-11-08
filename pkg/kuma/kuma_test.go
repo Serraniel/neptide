@@ -114,6 +114,22 @@ func TestAgainstKuma(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// It's listed, as scheduled: Kuma pushes the list again after a change.
+	var listed *MaintenanceInfo
+	for range 20 {
+		all, err := k.Maintenances(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i := slices.IndexFunc(all, func(m MaintenanceInfo) bool { return m.ID == s.ID }); i >= 0 {
+			listed = &all[i]
+			break
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	if listed == nil || listed.Title != "NepFleet: host update" || listed.Status != "scheduled" {
+		t.Fatalf("listed: %+v", listed)
+	}
 	if err := k.EndMaintenance(ctx, s); err != nil {
 		t.Fatal(err)
 	}

@@ -77,6 +77,41 @@ func (k *Client) Monitors(ctx context.Context) ([]Monitor, error) {
 	return out, nil
 }
 
+// MaintenanceInfo is a maintenance window as Kuma lists it.
+type MaintenanceInfo struct {
+	ID          int    `json:"id"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	// Strategy is manual, single, recurring-… or cron.
+	Strategy string `json:"strategy"`
+	Active   bool   `json:"active"`
+	// Status is under-maintenance, scheduled, ended, inactive or unknown.
+	Status string `json:"status"`
+	// Timeslots are its next or current windows, as Kuma reports them.
+	Timeslots []struct {
+		Start string `json:"startDate"`
+		End   string `json:"endDate"`
+	} `json:"timeslotList"`
+}
+
+// Maintenances lists every maintenance window, sorted by ID.
+func (k *Client) Maintenances(ctx context.Context) ([]MaintenanceInfo, error) {
+	raw, err := k.c.event(ctx, "maintenanceList")
+	if err != nil {
+		return nil, err
+	}
+	var byID map[string]MaintenanceInfo
+	if err := json.Unmarshal(raw, &byID); err != nil {
+		return nil, fmt.Errorf("maintenanceList: %w", err)
+	}
+	out := make([]MaintenanceInfo, 0, len(byID))
+	for _, m := range byID {
+		out = append(out, m)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
 // StatusPage is a Kuma status page.
 type StatusPage struct {
 	ID    int    `json:"id"`
