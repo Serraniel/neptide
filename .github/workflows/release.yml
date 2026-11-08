@@ -71,7 +71,7 @@ jobs:
   image:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write   # uploads the image's SBOM to the release
       packages: write
       id-token: write
     steps:
