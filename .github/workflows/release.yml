@@ -62,7 +62,7 @@ jobs:
         run: |
           mv dist/neptide_source.spdx.json "dist/neptide_${TAG#v}.spdx.json"
           (cd dist && sha256sum neptide_* > SHA256SUMS)
-      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
       - run: cosign sign-blob --yes --bundle dist/SHA256SUMS.sigstore.json dist/SHA256SUMS
       - run: gh release upload "$TAG" dist/* --clobber
         env:
@@ -86,7 +86,7 @@ jobs:
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
           echo "short=${commit::7}" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -128,7 +128,7 @@ jobs:
           output-file: image.cdx.json
           upload-artifact: false
           upload-release-assets: false
-      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
       - name: Sign image and attest SBOM
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
