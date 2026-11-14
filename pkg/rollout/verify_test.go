@@ -2,7 +2,10 @@
 
 package rollout
 
-import "testing"
+import (
+	"regexp"
+	"testing"
+)
 
 func TestVerifyLabels(t *testing.T) {
 	for v, ok := range map[string]bool{
@@ -18,8 +21,12 @@ func TestVerifyLabels(t *testing.T) {
 	if _, err := PolicyFrom(map[string]string{LabelVerifyIssuer: "http://issuer"}, Policy{}); err == nil {
 		t.Error("an http issuer")
 	}
-	p, err := PolicyFrom(map[string]string{LabelVerifyIdentity: "^x$"}, Policy{})
-	if err != nil || p.VerifyIdentity != "^x$" {
-		t.Errorf("%+v %v", p, err)
+	p, err := PolicyFrom(map[string]string{LabelVerifyIdentity: "^https://a/x|evil$"}, Policy{})
+	if err != nil || p.VerifyIdentity != "^(?:https://a/x|evil)$" {
+		t.Fatalf("%+v %v", p, err)
+	}
+	re := regexp.MustCompile(p.VerifyIdentity)
+	if re.MatchString("https://attacker/evil") || !re.MatchString("evil") {
+		t.Error("the alternation isn't anchored as a whole")
 	}
 }

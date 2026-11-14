@@ -57,24 +57,24 @@ type Checker struct {
 	// Trusted, if set, replaces Sigstore's public trusted root (tests).
 	Trusted root.TrustedMaterial
 
-	once    sync.Once
-	rootErr error
+	mu sync.Mutex
 }
 
+// trusted returns the trusted root, fetching it the first time. A failed
+// fetch isn't kept: the next check tries again (and fails closed meanwhile).
 func (c *Checker) trusted() (root.TrustedMaterial, error) {
-	c.once.Do(func() {
-		if c.Trusted != nil {
-			return
-		}
-		// neptide's file system is read-only: no TUF cache on disk.
-		live, err := root.NewLiveTrustedRoot(tuf.DefaultOptions().WithDisableLocalCache())
-		if err != nil {
-			c.rootErr = fmt.Errorf("fetching Sigstore's trusted root: %w", err)
-			return
-		}
-		c.Trusted = live
-	})
-	return c.Trusted, c.rootErr
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.Trusted != nil {
+		return c.Trusted, nil
+	}
+	// neptide's file system is read-only: no TUF cache on disk.
+	live, err := root.NewLiveTrustedRoot(tuf.DefaultOptions().WithDisableLocalCache())
+	if err != nil {
+		return nil, fmt.Errorf("fetching Sigstore's trusted root: %w", err)
+	}
+	c.Trusted = live
+	return c.Trusted, nil
 }
 
 type descriptor struct {

@@ -403,9 +403,13 @@ func (u *Updater) container(ctx context.Context, name string, labels map[string]
 	}
 	gate := u.Opts.Gate
 	gate.Timeout = pol.HealthTimeout
-	// Recreate by tag, as compose would; the pull resolves the same digest.
+	// Recreate by tag, as compose would. The pull usually resolves the same
+	// digest; with a signature check it must (WantDigest).
 	rec := rollout.Recreate{Auth: u.auth(next.Host), Gate: gate, OldConfig: u.oldConfig(ref), Hooks: hooks,
 		Log: func(msg string) { u.Log.Warn(oneLine(msg)) }}
+	if pol.VerifyIdentity != "" {
+		rec.WantDigest = next.Digest // what the signature check passed
+	}
 	if pol.Snapshot {
 		rec.Snapshots = &snapshot.Snapshotter{Engine: u.Engine, Keep: u.Opts.SnapshotKeep, DockerRoot: u.dockerRoot(ctx),
 			Binds: labels[rollout.LabelSnapshotBinds] == "true"}

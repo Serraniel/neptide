@@ -113,8 +113,11 @@ func PolicyFrom(labels map[string]string, def Policy) (Policy, error) {
 		if !strings.HasPrefix(v, "^") || !strings.HasSuffix(v, "$") {
 			return p, fmt.Errorf("%s=%q: anchor the expression with ^ and $", LabelVerifyIdentity, v)
 		}
+		// ^a|b$ anchors only half of each branch: group it, so the whole
+		// expression must match the whole identity.
+		v = "^(?:" + v[1:len(v)-1] + ")$"
 		if _, err := regexp.Compile(v); err != nil {
-			return p, fmt.Errorf("%s=%q: %w", LabelVerifyIdentity, v, err)
+			return p, fmt.Errorf("%s=%q: %w", LabelVerifyIdentity, labels[LabelVerifyIdentity], err)
 		}
 		p.VerifyIdentity = v
 	}

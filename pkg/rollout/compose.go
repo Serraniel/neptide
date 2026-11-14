@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 
@@ -78,6 +79,10 @@ type Recreate struct {
 	Log func(msg string)
 	// Hooks run commands in the containers around the update.
 	Hooks Hooks
+	// WantDigest, when set, is the digest the update was verified for (a
+	// signature check): the pull by tag must yield exactly it, or nothing
+	// changes. A tag moved in between must not slip an unchecked image in.
+	WantDigest string
 }
 
 // RecreateContainer replaces container id with one running newRef, keeping
@@ -114,6 +119,9 @@ func RecreateContainer(ctx context.Context, e Engine, id, newRef string, o Recre
 	newImage, err := e.InspectImage(ctx, newRef)
 	if err != nil {
 		return fmt.Errorf("new image: %w", err)
+	}
+	if o.WantDigest != "" && !slices.ContainsFunc(newImage.RepoDigests, func(d string) bool { return strings.HasSuffix(d, "@"+o.WantDigest) }) {
+		return fmt.Errorf("%s now resolves to %s, not the checked %s: not updating", newRef, strings.Join(newImage.RepoDigests, ", "), o.WantDigest)
 	}
 	if newImage.ID == old.Image {
 		return nil // already running this image
