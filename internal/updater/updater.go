@@ -381,12 +381,12 @@ func (u *Updater) container(ctx context.Context, name string, labels map[string]
 	gate.Timeout = pol.HealthTimeout
 	// Recreate by tag, as compose would; the pull resolves the same digest.
 	rec := rollout.Recreate{Auth: u.auth(next.Host), Gate: gate, OldConfig: u.oldConfig(ref), Hooks: hooks,
-		Log: func(msg string) { u.Log.Warn(msg) }}
+		Log: func(msg string) { u.Log.Warn(oneLine(msg)) }}
 	if pol.Snapshot {
 		rec.Snapshots = &snapshot.Snapshotter{Engine: u.Engine, Keep: u.Opts.SnapshotKeep, DockerRoot: u.dockerRoot(ctx),
 			Binds: labels[rollout.LabelSnapshotBinds] == "true"}
 		rec.Exclude = snapshot.Excludes(labels[rollout.LabelSnapshotExclude])
-		rec.Log = func(msg string) { u.Log.Warn(msg) }
+		rec.Log = func(msg string) { u.Log.Warn(oneLine(msg)) }
 	}
 	window := u.maintenance(ctx, name, labels, from, to, gate.Timeout+gate.Stable)
 	err = func() error {
@@ -424,9 +424,9 @@ func (u *Updater) maintenance(ctx context.Context, name string, labels map[strin
 	w, warnings := kuma.Open(ctx, u.Opts.Kuma, refs, "neptide: updating "+name, from+" → "+to, maxDuration, nil)
 	for _, msg := range warnings {
 		if strings.HasSuffix(msg, "in maintenance") {
-			u.Log.Info(msg, "target", name)
+			u.Log.Info("uptime kuma", "target", oneLine(name), "note", oneLine(msg))
 		} else {
-			u.Log.Warn(msg, "target", name)
+			u.Log.Warn("uptime kuma", "target", oneLine(name), "problem", oneLine(msg))
 		}
 	}
 	return kumaWindow{u: u, w: w, name: name}
@@ -437,7 +437,7 @@ func (k kumaWindow) close(ctx context.Context) {
 		return
 	}
 	for _, msg := range k.w.Close(context.WithoutCancel(ctx), nil) {
-		k.u.Log.Warn(msg, "target", k.name)
+		k.u.Log.Warn("uptime kuma", "target", oneLine(k.name), "problem", oneLine(msg))
 	}
 }
 
@@ -608,3 +608,10 @@ func (u *Updater) scheduledRestart(ctx context.Context, name string, labels map[
 	}
 	emit(Event{Kind: Restarted, Target: name, Window: sched.String()})
 }
+
+// logBreaks are what could start a forged line in a text log.
+var logBreaks = strings.NewReplacer("\n", " ", "\r", " ")
+
+// oneLine keeps a value from Docker or a monitor (a name, a message) on one
+// log line.
+func oneLine(s string) string { return logBreaks.Replace(s) }
