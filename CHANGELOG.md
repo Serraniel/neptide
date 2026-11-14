@@ -3,6 +3,11 @@
 ## [0.1.1](https://github.com/Serraniel/neptide/compare/v0.1.0...v0.1.1) (2026-11-14)
 
 
+### Security
+
+* [GHSA-cmp4-2w5r-p92r](https://github.com/Serraniel/neptide/security/advisories/GHSA-cmp4-2w5r-p92r): log injection through container and image names (low), fixed.
+* [GO-2026-5932](https://pkg.go.dev/vuln/GO-2026-5932): golang.org/x/crypto updated past the unmaintained, unsafe openpgp package (upstream).
+
 ### Bug Fixes
 
 * **deps:** golang.org/x/crypto v0.59.0 (GO-2026-5932) ([#53](https://github.com/Serraniel/neptide/issues/53)) ([17a4be9](https://github.com/Serraniel/neptide/commit/17a4be979a642423e1e77e9028ac6f2477e097d9))
