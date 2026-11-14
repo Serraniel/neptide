@@ -285,3 +285,41 @@ func nextLink(header string, base *url.URL) string {
 	}
 	return u.String()
 }
+
+// Manifest fetches the manifest r names by digest, or by tag when it has
+// none, as accept allows (an OCI index, say), up to 4 MiB.
+func (c *Client) Manifest(ctx context.Context, r Ref, accept string) ([]byte, error) {
+	ref := r.Digest
+	if ref == "" {
+		ref = r.Tag
+	}
+	u := fmt.Sprintf("%s/v2/%s/manifests/%s", c.base(r.Host), r.Repo, ref)
+	res, err := c.do(ctx, http.MethodGet, u, r, http.Header{"Accept": {accept}})
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = res.Body.Close() }()
+	return io.ReadAll(io.LimitReader(res.Body, 4<<20))
+}
+
+// Blob fetches a blob of r's repository by digest, up to limit bytes, and
+// checks that it is what the digest names.
+func (c *Client) Blob(ctx context.Context, r Ref, digest string, limit int64) ([]byte, error) {
+	hexSum, ok := strings.CutPrefix(digest, "sha256:")
+	if !ok {
+		return nil, fmt.Errorf("blob %s: only sha256 digests are supported", digest)
+	}
+	res, err := c.do(ctx, http.MethodGet, fmt.Sprintf("%s/v2/%s/blobs/%s", c.base(r.Host), r.Repo, digest), r, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = res.Body.Close() }()
+	data, err := io.ReadAll(io.LimitReader(res.Body, limit))
+	if err != nil {
+		return nil, err
+	}
+	if sum := sha256.Sum256(data); hex.EncodeToString(sum[:]) != hexSum {
+		return nil, fmt.Errorf("blob %s: content doesn't match its digest", digest)
+	}
+	return data, nil
+}

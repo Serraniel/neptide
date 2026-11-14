@@ -31,6 +31,8 @@ Swarm: see [stack.yaml](stack.yaml). It runs one service updater on a manager, p
 | `neptide.mode` | `update`, `notify` | `update`; `--monitor-only` wins |
 | `neptide.health-timeout` | duration, e.g. `3m` | `--health-timeout` (`2m`) |
 | `neptide.window` | e.g. `Sat,Sun 03:00-05:00`, `daily 02:00-04:00; Wed 12:00-13:00` | `--window` (any time): apply updates only then, report them as available otherwise |
+| `neptide.verify.identity` | regex, anchored, e.g. `^https://github\.com/acme/app/\.github/workflows/release\.yml@refs/tags/v.*$` | none: update only to digests signed with Sigstore (cosign sign) by this identity; see [Signed images](#signed-images) |
+| `neptide.verify.issuer` | https URL | GitHub Actions' (`https://token.actions.githubusercontent.com`) |
 | `neptide.hook.pre-update` / `neptide.hook.post-update` | a command, e.g. `pg_dump -U app app > /backup/app.sql` | none; see [Hooks](#hooks) |
 | `neptide.hook.timeout` | duration | `5m` per hook |
 | `neptide.restart` | interval (`6h`) or window (`daily 04:00-05:00`) | none: restart on a schedule, behind the health gate |
@@ -95,6 +97,18 @@ With `--kuma-url https://kuma.example.org --kuma-username neptide` and the passw
 - **If Kuma is down:** the update still runs, and a warning is logged. An unreachable Kuma can add up to 30 seconds per updated container for the login, and the same again for closing the window.
 
 The client is `pkg/kuma`, shared with NepFleet.
+
+### Signed images
+
+With `neptide.verify.identity`, neptide updates a container only to a digest that carries a valid Sigstore signature by that identity: the kind `cosign sign` makes, keyless, with the signing certificate issued to the identity (for GitHub Actions, the workflow's URL and ref) and logged in Rekor. An update that isn't signed, or is signed by anyone else, is refused and reported as `failed` with the reason; the container keeps running what it runs.
+
+The signature is read from the registry as an OCI referrer of the digest (Sigstore bundle; the referrers API, or the `sha256-<digest>` tag registries such as ghcr.io use instead). It is checked against Sigstore's public trusted root, which neptide fetches over TUF the first time a label asks for it and refreshes daily; nothing is written to disk. Images signed in the older cosign format (a `.sig` tag) aren't recognised yet.
+
+```yaml
+labels:
+  neptide.enable: "true"
+  neptide.verify.identity: '^https://github\.com/Serraniel/nepfleet/\.github/workflows/release\.yml@refs/(heads/main|tags/v[0-9.]+)$'
+```
 
 ### Private registries
 

@@ -6,7 +6,9 @@ package rollout
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Serraniel/neptide/pkg/version"
@@ -24,6 +26,13 @@ const (
 	LabelSnapshot        = "neptide.snapshot"
 	LabelSnapshotExclude = "neptide.snapshot.exclude"
 	LabelSnapshotBinds   = "neptide.snapshot.binds"
+	// LabelVerifyIdentity, a regular expression for the signing certificate's
+	// identity (for GitHub Actions, the workflow's URL), makes neptide update
+	// only to digests with a valid Sigstore signature by it (cosign sign).
+	LabelVerifyIdentity = "neptide.verify.identity"
+	// LabelVerifyIssuer is the OIDC issuer of that identity; GitHub Actions'
+	// by default.
+	LabelVerifyIssuer = "neptide.verify.issuer"
 )
 
 // Mode is what happens when an update is found.
@@ -45,6 +54,10 @@ type Policy struct {
 	Snapshot      bool
 	// Window limits when updates are applied; empty means any time.
 	Window Windows
+	// VerifyIdentity and VerifyIssuer require a signature (see
+	// LabelVerifyIdentity); empty means none is checked.
+	VerifyIdentity string
+	VerifyIssuer   string
 }
 
 // PolicyFrom reads labels on top of defaults. Invalid labels are errors, not
@@ -93,6 +106,23 @@ func PolicyFrom(labels map[string]string, def Policy) (Policy, error) {
 			return p, fmt.Errorf("%s=%q: want a positive duration like 2m", LabelHealthTimeout, v)
 		}
 		p.HealthTimeout = d
+	}
+	if v, ok := labels[LabelVerifyIdentity]; ok {
+		// Anchored: an identity "matching" somewhere inside another one's URL
+		// would accept a stranger's signature.
+		if !strings.HasPrefix(v, "^") || !strings.HasSuffix(v, "$") {
+			return p, fmt.Errorf("%s=%q: anchor the expression with ^ and $", LabelVerifyIdentity, v)
+		}
+		if _, err := regexp.Compile(v); err != nil {
+			return p, fmt.Errorf("%s=%q: %w", LabelVerifyIdentity, v, err)
+		}
+		p.VerifyIdentity = v
+	}
+	if v, ok := labels[LabelVerifyIssuer]; ok {
+		if !strings.HasPrefix(v, "https://") {
+			return p, fmt.Errorf("%s=%q: an issuer is an https URL", LabelVerifyIssuer, v)
+		}
+		p.VerifyIssuer = v
 	}
 	return p, nil
 }
