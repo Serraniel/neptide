@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/Serraniel/neptide/compare/v0.1.1...v0.2.0) (2026-11-14)
+
+
+### Features
+
+* update only to images signed by the expected identity ([#57](https://github.com/Serraniel/neptide/issues/57)) ([4937ea6](https://github.com/Serraniel/neptide/commit/4937ea62129f7117272a373fb0ae9cf6d405ea86))
+
 ## [0.1.1](https://github.com/Serraniel/neptide/compare/v0.1.0...v0.1.1) (2026-11-14)
 
 
