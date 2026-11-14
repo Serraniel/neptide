@@ -4,6 +4,7 @@ package updater
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Serraniel/neptide/pkg/engine"
@@ -42,5 +43,11 @@ func TestSkip(t *testing.T) {
 		if got := skip(c.labels); got != c.want {
 			t.Errorf("skip(%v) = %v", c.labels, got)
 		}
+	}
+}
+
+func TestOneLine(t *testing.T) {
+	if got := oneLine("web\ntime=x level=ERROR msg=forged\r"); strings.ContainsAny(got, "\n\r") {
+		t.Errorf("a line break stayed: %q", got)
 	}
 }
