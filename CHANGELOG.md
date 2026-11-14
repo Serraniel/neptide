@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.1](https://github.com/Serraniel/neptide/compare/v0.1.0...v0.1.1) (2026-11-14)
+
+
+### Bug Fixes
+
+* **deps:** golang.org/x/crypto v0.59.0 (GO-2026-5932) ([#53](https://github.com/Serraniel/neptide/issues/53)) ([17a4be9](https://github.com/Serraniel/neptide/commit/17a4be979a642423e1e77e9028ac6f2477e097d9))
+* **updater:** keep names and monitor messages on one log line ([#54](https://github.com/Serraniel/neptide/issues/54)) ([6811a65](https://github.com/Serraniel/neptide/commit/6811a6594a9762d9ecf9a09c2d7f6bc11ca229ff))
+
 ## 0.1.0 (2026-11-08)
 
 
