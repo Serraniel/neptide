@@ -10,12 +10,14 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Serraniel/neptide/pkg/engine"
 	"github.com/Serraniel/neptide/pkg/kuma"
 	"github.com/Serraniel/neptide/pkg/registry"
 	"github.com/Serraniel/neptide/pkg/rollout"
+	"github.com/Serraniel/neptide/pkg/sigcheck"
 	"github.com/Serraniel/neptide/pkg/snapshot"
 	"github.com/Serraniel/neptide/pkg/version"
 )
@@ -101,6 +103,10 @@ type Updater struct {
 	Opts     Options
 	// Now is the clock for maintenance windows (time.Now when nil).
 	Now func() time.Time
+	// Signatures checks images that neptide.verify.identity asks for; made
+	// from Registry when nil.
+	Signatures *sigcheck.Checker
+	sigOnce    sync.Once
 
 	wake time.Time
 }
@@ -204,7 +210,8 @@ func (u *Updater) policy(labels map[string]string) (rollout.Policy, error) {
 
 // plan resolves what ref should run. It returns the new ref ("" if current)
 // and a newer release beyond the track, if any.
-func (u *Updater) plan(ctx context.Context, current registry.Ref, runningDigest string, track version.Track) (next registry.Ref, beyond string, err error) {
+func (u *Updater) plan(ctx context.Context, current registry.Ref, runningDigest string, pol rollout.Policy) (next registry.Ref, beyond string, err error) {
+	track := pol.Track
 	target := current
 	// Tags are listed even for track=digest, to report releases beyond the
 	// track. Listing is not rate-limited like pulls, but some registries
@@ -229,7 +236,24 @@ func (u *Updater) plan(ctx context.Context, current registry.Ref, runningDigest 
 	if target.Tag == current.Tag && digest == runningDigest {
 		return registry.Ref{}, beyond, nil
 	}
-	return target.WithDigest(digest), beyond, nil
+	next = target.WithDigest(digest)
+	if pol.VerifyIdentity != "" {
+		// Unsigned, or signed by someone else: not an update, whatever it says.
+		if err := u.signatures().Verify(ctx, next, sigcheck.Policy{Identity: pol.VerifyIdentity, Issuer: pol.VerifyIssuer}); err != nil {
+			return registry.Ref{}, beyond, fmt.Errorf("not updating to %s: %w", next.String(), err)
+		}
+	}
+	return next, beyond, nil
+}
+
+// signatures is the signature checker, made on first use.
+func (u *Updater) signatures() *sigcheck.Checker {
+	u.sigOnce.Do(func() {
+		if u.Signatures == nil {
+			u.Signatures = &sigcheck.Checker{Registry: u.Registry}
+		}
+	})
+	return u.Signatures
 }
 
 // dependents maps a container ID to the containers, running or stopped,
@@ -353,7 +377,7 @@ func (u *Updater) container(ctx context.Context, name string, labels map[string]
 		fail(err)
 		return
 	}
-	next, beyond, err := u.plan(ctx, ref, running, pol.Track)
+	next, beyond, err := u.plan(ctx, ref, running, pol)
 	if err != nil {
 		fail(err)
 		return
@@ -379,9 +403,13 @@ func (u *Updater) container(ctx context.Context, name string, labels map[string]
 	}
 	gate := u.Opts.Gate
 	gate.Timeout = pol.HealthTimeout
-	// Recreate by tag, as compose would; the pull resolves the same digest.
+	// Recreate by tag, as compose would. The pull usually resolves the same
+	// digest; with a signature check it must (WantDigest).
 	rec := rollout.Recreate{Auth: u.auth(next.Host), Gate: gate, OldConfig: u.oldConfig(ref), Hooks: hooks,
 		Log: func(msg string) { u.Log.Warn(oneLine(msg)) }}
+	if pol.VerifyIdentity != "" {
+		rec.WantDigest = next.Digest // what the signature check passed
+	}
 	if pol.Snapshot {
 		rec.Snapshots = &snapshot.Snapshotter{Engine: u.Engine, Keep: u.Opts.SnapshotKeep, DockerRoot: u.dockerRoot(ctx),
 			Binds: labels[rollout.LabelSnapshotBinds] == "true"}
@@ -459,7 +487,7 @@ func (u *Updater) service(ctx context.Context, svc *engine.Service, emit func(Ev
 	}
 	running := ref.Digest
 	ref.Digest = ""
-	next, beyond, err := u.plan(ctx, ref, running, pol.Track)
+	next, beyond, err := u.plan(ctx, ref, running, pol)
 	if err != nil {
 		fail(err)
 		return
