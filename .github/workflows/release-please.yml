@@ -54,6 +54,8 @@ jobs:
         run: |
           gh pr list --state open --label "autorelease: pending" --json headRefName -q '.[].headRefName' |
             while read -r branch; do
-              gh workflow run ci.yml --ref "$branch"
-              gh workflow run security.yml --ref "$branch"
+              gh workflow run ci.yml --ref "$branch" \
+                || echo "::warning::couldn't dispatch on $branch (its workflow files predate the dispatch trigger until release-please rebases it)"
+              gh workflow run security.yml --ref "$branch" \
+                || echo "::warning::couldn't dispatch on $branch (its workflow files predate the dispatch trigger until release-please rebases it)"
             done
