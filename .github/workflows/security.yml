@@ -8,6 +8,7 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
   schedule:
     - cron: "17 4 * * 1"
 
@@ -40,7 +41,7 @@ jobs:
           category: /language:${{ matrix.language }}
 
   scorecard:
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'push' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
