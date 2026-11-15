@@ -36,26 +36,3 @@ jobs:
       contents: write
       packages: write
       id-token: write
-
-  # Release PRs are opened with GITHUB_TOKEN, which starts no workflow; a
-  # dispatch does. The checks run on the PR's head commit and show on the PR.
-  release-pr-checks:
-    needs: release-please
-    runs-on: ubuntu-latest
-    permissions:
-      actions: write
-      pull-requests: read
-    steps:
-      - name: Run the required checks on open release PRs
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          BASE: ${{ github.sha }}
-        run: |
-          gh pr list --state open --label "autorelease: pending" --json headRefName -q '.[].headRefName' |
-            while read -r branch; do
-              gh workflow run ci.yml --ref "$branch" \
-                || echo "::warning::couldn't dispatch on $branch (its workflow files predate the dispatch trigger until release-please rebases it)"
-              gh workflow run security.yml --ref "$branch" \
-                || echo "::warning::couldn't dispatch on $branch (its workflow files predate the dispatch trigger until release-please rebases it)"
-            done
