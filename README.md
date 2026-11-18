@@ -154,6 +154,10 @@ Skipped mounts are logged. A snapshot that would leave less than 10 % of the dis
 1. Change the image to `name:tag@digest`, with `update_config` defaulted as described above.
 2. Wait for Swarm to report `completed` or `rollback_completed`.
 
+## As a library
+
+The packages under `pkg/` are public and stay compatible within a minor version, checked in CI: see [docs/library.md](docs/library.md).
+
 ## Develop
 
 ```sh

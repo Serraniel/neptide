@@ -76,6 +76,40 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
       - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
+  # The public packages (pkg/...) stay compatible within a minor version:
+  # NepFleet imports them (docs/library.md). An incompatible change against
+  # the last release needs "!" in the PR title, so the changelog says so.
+  api-compat:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Compare pkg/ with the last release
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          go install golang.org/x/exp/cmd/apidiff@v0.0.0-20261117202309-7a49493bfd90
+          base=$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD)
+          git worktree add -q --detach "$RUNNER_TEMP/base" "$base"
+          (cd "$RUNNER_TEMP/base" && apidiff -m -w "$RUNNER_TEMP/base.exp" github.com/Serraniel/neptide >/dev/null)
+          out=$(apidiff -m -incompatible "$RUNNER_TEMP/base.exp" github.com/Serraniel/neptide | grep -v '^Ignoring internal package' || true)
+          if [ -z "$out" ]; then
+            echo "pkg/ is compatible with $base"
+          elif echo "$TITLE" | grep -Eq '^[a-z]+(\([a-z0-9-]+\))?!: '; then
+            printf '%s\n' "$out"
+            echo "::warning::incompatible changes to pkg/ since $base, marked as breaking in the title"
+          else
+            printf '%s\n' "$out"
+            echo "::error::incompatible changes to pkg/ since $base: keep them compatible, or mark the PR title as breaking (feat!: …)"
+            exit 1
+          fi
+
   conventional-title:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
