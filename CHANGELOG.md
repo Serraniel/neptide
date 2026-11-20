@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.1](https://github.com/Serraniel/neptide/compare/v0.2.0...v0.2.1) (2026-11-20)
+
+
+### Dependencies
+
+* Bump github.com/nicholas-fedor/shoutrrr from 0.23.0 to 0.24.0 in the go group ([#63](https://github.com/Serraniel/neptide/issues/63)) ([3e44487](https://github.com/Serraniel/neptide/commit/3e444872c22a885e447b51c488f43a1178b52c54))
+* Bump golang from `0a5f7fe` to `70bd7dd` ([#65](https://github.com/Serraniel/neptide/issues/65)) ([655f13b](https://github.com/Serraniel/neptide/commit/655f13b86e9ceedc7bf3c5dca260ece46191a609))
+
 ## [0.2.0](https://github.com/Serraniel/neptide/compare/v0.1.1...v0.2.0) (2026-11-14)
 
 
