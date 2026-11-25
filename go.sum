@@ -226,8 +226,8 @@ github.com/mitchellh/mapstructure v1.5.0 h1:jeMsZIYE/09sWLaz43PL7Gy6RuMjD2eJVyua
 github.com/mitchellh/mapstructure v1.5.0/go.mod h1:bFUtVrKA4DC2yAKiSyO/QUcy7e+RRV2QTWOzhPopBRo=
 github.com/natefinch/atomic v1.0.1 h1:ZPYKxkqQOx3KZ+RsbnP/YsgvxWQPGxjC0oBt2AhwV0A=
 github.com/natefinch/atomic v1.0.1/go.mod h1:N/D/ELrljoqDyT3rZrsUmtsuzvHkeB/wWjHV22AZRbM=
-github.com/nicholas-fedor/shoutrrr v0.24.0 h1:k5yEH3jCRVjIldtQE1LsFlRrnKS+c40UKZ47bHMfZU4=
-github.com/nicholas-fedor/shoutrrr v0.24.0/go.mod h1:VC9VA+l0L8rOZjuiEKSnWC6lHf+reDjUSYmWh4nT1go=
+github.com/nicholas-fedor/shoutrrr v0.25.0 h1:3h6t0GSHi0j+KYXTYf2tXdEhM22R/u0gJKznhcM12k8=
+github.com/nicholas-fedor/shoutrrr v0.25.0/go.mod h1:WzPFvHCXGB/PYwtTHIT/8sBX6gnamGeSiSV5FjWYYgk=
 github.com/oklog/ulid/v2 v2.1.2 h1:IEclFb9JNvzYA6MW2SCxbLzcHTVsfqm3PrqGQJH5zec=
 github.com/oklog/ulid/v2 v2.1.2/go.mod h1:rcEKHmBBKfef9DhnvX7y1HZBYxjXb0cP5ExxNsTT1QQ=
 github.com/opencontainers/go-digest v1.0.0 h1:apOUWs51W5PlhuyGyz9FCeeBIOUDA/6nW8Oi/yOhh5U=

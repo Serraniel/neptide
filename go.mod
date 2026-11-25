@@ -4,7 +4,7 @@ go 1.27.4
 
 require (
 	github.com/coder/websocket v1.8.15
-	github.com/nicholas-fedor/shoutrrr v0.24.0
+	github.com/nicholas-fedor/shoutrrr v0.25.0
 	github.com/sigstore/sigstore-go v1.4.0
 	go.yaml.in/yaml/v3 v3.0.6
 )
