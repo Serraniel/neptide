@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.1](https://github.com/Serraniel/neptide/compare/v0.2.0...v0.2.1) (2026-11-25)
+
+
+### Bug Fixes
+
+* **deps:** gorilla/websocket with a random mask key (GO-2026-6278) ([#68](https://github.com/Serraniel/neptide/issues/68)) ([71467c6](https://github.com/Serraniel/neptide/commit/71467c64e956c2f78056acdf2a3a19c217722768))
+
+
+### Dependencies
+
+* Bump github.com/nicholas-fedor/shoutrrr from 0.23.0 to 0.24.0 in the go group ([#63](https://github.com/Serraniel/neptide/issues/63)) ([3e44487](https://github.com/Serraniel/neptide/commit/3e444872c22a885e447b51c488f43a1178b52c54))
+* Bump golang from `0a5f7fe` to `70bd7dd` ([#65](https://github.com/Serraniel/neptide/issues/65)) ([655f13b](https://github.com/Serraniel/neptide/commit/655f13b86e9ceedc7bf3c5dca260ece46191a609))
+* Bump the go group across 1 directory with 2 updates ([#69](https://github.com/Serraniel/neptide/issues/69)) ([e775224](https://github.com/Serraniel/neptide/commit/e775224b75c8eeb8a0220338674990c7355f6cf6))
+
 ## [0.2.0](https://github.com/Serraniel/neptide/compare/v0.1.1...v0.2.0) (2026-11-14)
 
 
